@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+    postgres_database:
+        image: postgres:15-alpine
+        container_name: postgres_database
+        environment:
+            POSTGRES_USER: admin
+            POSTGRES_PASSWORD: passwd
+            POSTGRES_DB: sensor_db
+        ports:
+            - "5432:5432"
+        volumes:
+            - postgres_data:/var/lib/postgresql/data
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U admin"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    mqtt_broker:
+        image: eclipse-mosquitto:latest
+        container_name: mqtt_broker
+        ports:
+            - "1883:1883"
+            - "9001:9001"
+        volumes:
+            - mosquitto_data:/mosquitto/data
+            - mosquitto_logs:/mosquitto/log
+            - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+        healthcheck:
+            test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$SYS/#", "-C", "1"]
+            interval: 10s
+            timeout: 5s
+            retries: 5
+
+    sensor_simulator:
+        build: ./sensor_simulator
+        container_name: sensor_simulator
+        depends_on:
+            mqtt_broker:
+                condition: service_healthy
+        environment:
+            MQTT_BROKER: mqtt_broker
+            MQTT_PORT: 1883
+        restart: unless-stopped
+
+    fastapi_backend:
+        build: ./backend
+        container_name: fastapi_backend
+        ports:
+            - "8000:8000"
+        depends_on:
+            postgres_database:
+                condition: service_healthy
+            mqtt_broker:
+                condition: service_healthy
+        environment:
+            DATABASE_URL: postgresql://sensor_user:passwd@postgres_database:5432/sensor_db
+            MQTT_BROKER: mqtt_broker
+            MQTT_PORT: 1883
+        restart: unless-stopped
+
+    nginx_frontend:
+        image: nginx:alpine
+        container_name: nginx_frontend
+        ports:
+            - "80:80"
+        volumes:
+            - ./frontend/dist:/usr/share/nginx/html:ro
+            - ./nginx.conf:/etc/nginx/nginx.conf:ro
+        depends_on:
+            - fastapi_backend
+        restart: unless-stopped
+
+volumes:
+    postgres_data:
+    mosquitto_data:
+    mosquitto_logs:
