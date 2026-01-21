@@ -1,7 +1,12 @@
-<h2>Ansatz</h2>
-Wir kamen nach kurzer Überlegung zu dem Schluss, dass, da die Aufgaben großflächig aufbauender Natur sind, es zweckwidrig wäre, sie in größerem Stil auf uns aufzuteilen. Stattdessen werden wir sie der Reihe nach gemeinsam bearbeiten.
+<h2>Approach</h2>
+After brief consideration, we concluded that since the tasks mostly build up on each other, it would be counterproductive to divide the workload. Instead, we will work through them sequentially together.
 
-<h3>20.1.2026</h3>
-<li>Aufsetzen der Projektstruktur</li>
-<li>Config-Dateien (docker-compose.yml, mosquitto.conf, .env, .env.example)</li>
-<li>Für Formatting und Linting: Ruff + Black</li>
+<h3>2026/01/20</h3>
+<li>Set up project structure</li>
+<li>Config files (docker-compose.yml, mosquitto.conf, .env, .env.example)</li>
+<li>For formatting and linting: Ruff + Black</li>
+
+<h3>2026/01/21</h3>
+<li>Wrote Dockerfiles for sensor_simulator and fastapi_backend</li>
+<li>Got to work on sensor_simulator's main.py</li>
+

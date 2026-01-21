@@ -35,7 +35,7 @@ services:
             retries: 5
 
     sensor_simulator:
-        build: ./sensor_simulator
+        build: ./src/sensor_simulator
         container_name: sensor_simulator
         depends_on:
             mqtt_broker:
@@ -46,7 +46,7 @@ services:
         restart: unless-stopped
 
     fastapi_backend:
-        build: ./backend
+        build: ./src/fastapi_backend
         container_name: fastapi_backend
         ports:
             - "8000:8000"
