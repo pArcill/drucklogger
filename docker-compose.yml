@@ -5,15 +5,15 @@ services:
         image: postgres:15-alpine
         container_name: postgres_database
         environment:
-            POSTGRES_USER: admin
-            POSTGRES_PASSWORD: passwd
-            POSTGRES_DB: sensor_db
+            POSTGRES_USER: ${POSTGRES_USER}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+            POSTGRES_DB: ${POSTGRES_DB}
         ports:
-            - "5432:5432"
+            - "${POSTGRES_PORT}:5432"
         volumes:
             - postgres_data:/var/lib/postgresql/data
         healthcheck:
-            test: ["CMD-SHELL", "pg_isready -U admin"]
+            test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
             interval: 10s
             timeout: 5s
             retries: 5
@@ -22,14 +22,14 @@ services:
         image: eclipse-mosquitto:latest
         container_name: mqtt_broker
         ports:
-            - "1883:1883"
-            - "9001:9001"
+            - "${MQTT_TCP_PORT}:1883"
+            - "${MQTT_WS_PORT}:9001"
         volumes:
             - mosquitto_data:/mosquitto/data
             - mosquitto_logs:/mosquitto/log
             - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
         healthcheck:
-            test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$SYS/#", "-C", "1"]
+            test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/#", "-C", "1"]
             interval: 10s
             timeout: 5s
             retries: 5
@@ -41,31 +41,33 @@ services:
             mqtt_broker:
                 condition: service_healthy
         environment:
-            MQTT_BROKER: mqtt_broker
-            MQTT_PORT: 1883
+            MQTT_BROKER: ${MQTT_BROKER}
+            MQTT_PORT: ${MQTT_PORT}
+            LOG_LEVEL: ${LOG_LEVEL}
         restart: unless-stopped
 
     fastapi_backend:
         build: ./src/fastapi_backend
         container_name: fastapi_backend
         ports:
-            - "8000:8000"
+            - "${API_PORT}:8000"
         depends_on:
             postgres_database:
                 condition: service_healthy
             mqtt_broker:
                 condition: service_healthy
         environment:
-            DATABASE_URL: postgresql://sensor_user:passwd@postgres_database:5432/sensor_db
-            MQTT_BROKER: mqtt_broker
-            MQTT_PORT: 1883
+            DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
+            MQTT_BROKER: ${MQTT_BROKER}
+            MQTT_PORT: ${MQTT_PORT}
+            LOG_LEVEL: ${LOG_LEVEL}
         restart: unless-stopped
 
     nginx_frontend:
         image: nginx:alpine
         container_name: nginx_frontend
         ports:
-            - "80:80"
+            - "${NGINX_PORT}:80"
         volumes:
             - ./frontend/dist:/usr/share/nginx/html:ro
             - ./nginx.conf:/etc/nginx/nginx.conf:ro
