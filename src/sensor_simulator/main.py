@@ -72,12 +72,34 @@ class SensorSimulator:
 	"""
 	def __init__(self, mac: str, mqtt_broker: str, mqtt_port: int):
 		self.mac = mac
+		self.mqtt_broker = mqtt_broker
+		self.mqtt_port = mqtt_port
 		self.client = mqtt.Client()
 		self.client.on_connect = self._on_connect
 		self.client.on_disconnect = self._on_disconnect
-		logger.info(f"Connecting sensor {mac} to MQTT broker {mqtt_broker}:{mqtt_port}")
-		self.client.connect(mqtt_broker, mqtt_port)
+		self._connect_with_retry()
 		self.client.loop_start()
+
+	def _connect_with_retry(self, max_retries=10, initial_delay=1):
+		"""Connect to MQTT broker with exponential backoff retry"""
+		delay = initial_delay
+		for attempt in range(max_retries):
+			try:
+				logger.info(f"Connecting sensor {self.mac} to MQTT broker {self.mqtt_broker}:{self.mqtt_port} (attempt {attempt + 1}/{max_retries})")
+				self.client.connect(self.mqtt_broker, self.mqtt_port)
+				logger.info(f"Sensor {self.mac} connection initiated successfully")
+				return
+			except ConnectionRefusedError:
+				if attempt < max_retries - 1:
+					logger.warning(f"Connection refused for sensor {self.mac}, retrying in {delay}s...")
+					time.sleep(delay)
+					delay = min(delay * 2, 30)  # Exponential backoff, max 30s
+				else:
+					logger.error(f"Failed to connect sensor {self.mac} after {max_retries} attempts")
+					raise
+			except Exception as e:
+				logger.error(f"Unexpected error connecting sensor {self.mac}: {e}")
+				raise
 
 	def _on_connect(self, client, userdata, flags, rc):
 		"""Callback when connected to MQTT broker"""
@@ -137,8 +159,10 @@ def main():
 	
 	logger.info(f"Started {len(sensors)} sensor simulators")
 	
-	# Wait for connections to establish
-	time.sleep(2)
+	# Send initial status for all sensors
+	logger.info("Sending initial status updates...")
+	for sensor in sensors:
+		sensor.send_status()
 	
 	try:
 		measurement_counter = 0

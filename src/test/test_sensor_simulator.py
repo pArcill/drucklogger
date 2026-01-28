@@ -19,13 +19,27 @@ class FakeMqttClient:
     def __init__(self):
         self.connected_to = None
         self.published = []  # list of (topic, payload)
+        self.on_connect = None
+        self.on_disconnect = None
+        self._loop_started = False
 
     def connect(self, host, port):
         self.connected_to = (host, port)
+        # Simulate successful connection callback
+        if self.on_connect:
+            self.on_connect(self, None, None, 0)
 
     def publish(self, topic, payload):
         self.published.append((topic, payload))
 
+    def loop_start(self):
+        self._loop_started = True
+
+    def loop_stop(self):
+        self._loop_started = False
+
+    def disconnect(self):
+        pass
 
 def _setup_simulator_with_fake_client(monkeypatch):
     fake_client = FakeMqttClient()
