@@ -1,4 +1,5 @@
 # mqtt_handler.py
+import asyncio
 import json
 import logging
 import os
@@ -20,7 +21,7 @@ class MQTTHandler:
     """
     Handles MQTT connections and message processing for sensor data
     """
-    def __init__(self, broker: str, port: int):
+    def __init__(self, broker: str, port: int, broadcast_callback=None):
         self.broker = broker
         self.port = port
         self.client = mqtt.Client()
@@ -29,6 +30,7 @@ class MQTTHandler:
         self.client.on_disconnect = self._on_disconnect
         self.is_running = False
         self._thread = None
+        self.broadcast_callback = broadcast_callback
         
     def _on_connect(self, client, userdata, flags, rc):
         """Callback when connected to MQTT broker"""
@@ -164,6 +166,18 @@ class MQTTHandler:
                 session.add(measurement)
                 session.commit()
                 logger.debug(f"Saved measurement: sensor_id={sensor.id}, pressure={pressure}")
+                
+                # Broadcast to WebSocket clients
+                if self.broadcast_callback:
+                    broadcast_data = {
+                        "type": "measurement",
+                        "sensor_id": sensor.id,
+                        "mac_address": sensor.mac_address,
+                        "sensor_name": sensor.name,
+                        "pressure": pressure,
+                        "timestamp": measurement.created_at.isoformat()
+                    }
+                    asyncio.create_task(self.broadcast_callback(broadcast_data))
                 
         except Exception as e:
             logger.error(f"Error handling measurement data: {e}", exc_info=True)

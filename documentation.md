@@ -90,3 +90,5 @@ After brief consideration, we concluded that since the tasks mostly build up on 
     
 </ul>
 </li>
+<li>Branched off into "Martin" and "paolo"</li>
+<li><b>Branch Martin:</b> added HTML file for the frontend; adjusted backend's main.py as well as MQTT to use WebSockets and redirect traffic there</li>
