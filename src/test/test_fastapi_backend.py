@@ -15,7 +15,7 @@ if SRC_PATH not in sys.path:
 
 from fastapi_backend.models import Sensor, Measurement
 from fastapi_backend.main import app
-from fastapi_backend.database import get_session
+from postgres_database.database import get_session
 
 
 @pytest.fixture(name="session")

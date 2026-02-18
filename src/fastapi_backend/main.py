@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from sqlmodel import Session, select
 
-from .database import create_db_and_tables, engine
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from postgres_database.database import create_db_and_tables, engine
 from .mqtt_handler import MQTTHandler
 from .models import Measurement
 

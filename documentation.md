@@ -92,3 +92,8 @@ After brief consideration, we concluded that since the tasks mostly build up on 
 </li>
 <li>Branched off into "Martin" and "paolo"</li>
 <li><b>Branch Martin:</b> added HTML file for the frontend; adjusted backend's main.py as well as MQTT to use WebSockets and redirect traffic there</li>
+
+
+<li>2026/02/18, branch Martin</li>
+<li>wrote instruction file</li>
+<li>moved the frontend HTML files as well as database.py into the correct directory, respectively</li>

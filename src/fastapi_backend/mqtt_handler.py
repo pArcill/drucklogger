@@ -9,7 +9,11 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from sqlmodel import Session, select
 
-from .database import engine
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from postgres_database.database import engine
 from .models import Sensor, Measurement
 
 # Configure logging
