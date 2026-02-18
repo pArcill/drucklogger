@@ -14,7 +14,6 @@ if SRC_PATH not in sys.path:
 
 import sensor_simulator.main as sensor_main
 
-
 class FakeMqttClient:
     def __init__(self):
         self.connected_to = None
@@ -60,6 +59,7 @@ def _setup_simulator_with_fake_client(monkeypatch):
 
 
 def test_send_status_publishes_valid_status(monkeypatch):
+    """Ensure status messages publish a single valid payload within expected ranges."""
     simulator, fake_client = _setup_simulator_with_fake_client(monkeypatch)
 
     simulator.send_status()
@@ -82,6 +82,7 @@ def test_send_status_publishes_valid_status(monkeypatch):
 
 
 def test_send_status_uses_random_upper_bounds(monkeypatch):
+    """Verify patched random.uniform upper bounds propagate into status payload."""
     simulator, fake_client = _setup_simulator_with_fake_client(monkeypatch)
 
     # Force random.uniform to always return the upper bound
@@ -103,6 +104,7 @@ def test_send_status_uses_random_upper_bounds(monkeypatch):
 
 
 def test_send_measurement_publishes_valid_measurement(monkeypatch):
+    """Confirm measurement topic receives realistic pressure values and timestamps."""
     simulator, fake_client = _setup_simulator_with_fake_client(monkeypatch)
 
     simulator.send_measurement()
@@ -121,6 +123,7 @@ def test_send_measurement_publishes_valid_measurement(monkeypatch):
 
 
 def test_sensor_simulator_connects_on_init(monkeypatch):
+    """Check __init__ triggers MQTT connection with provided broker coordinates."""
     fake_client = FakeMqttClient()
 
     monkeypatch.setattr(sensor_main.mqtt, "Client", lambda: fake_client)

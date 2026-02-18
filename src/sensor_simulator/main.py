@@ -151,7 +151,7 @@ def main():
 	mqtt_port = int(os.getenv("MQTT_PORT", "1883"))
 	
 	# Create three sensors with different MAC addresses
-	sensors = [
+	sensors: list[SensorSimulator] = [
 		SensorSimulator("AA:BB:CC:00:11:22", mqtt_broker, mqtt_port),
 		SensorSimulator("AA:BB:CC:00:11:23", mqtt_broker, mqtt_port),
 		SensorSimulator("AA:BB:CC:00:11:24", mqtt_broker, mqtt_port),
