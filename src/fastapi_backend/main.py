@@ -6,14 +6,14 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from sqlmodel import Session, select
 
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from postgres_database.database import create_db_and_tables, engine
+from postgres_database.database import create_db_and_tables, engine, get_session
 from .mqtt_handler import MQTTHandler
 from .models import Measurement
 
@@ -105,25 +105,24 @@ def health_check():
 
 
 @app.get("/api/measurements")
-def get_latest_measurements(limit: int = 100):
+def get_latest_measurements(limit: int = 100, session: Session = Depends(get_session)):
     """Get latest measurements from all sensors"""
     try:
-        with Session(engine) as session:
-            statement = select(Measurement).order_by(Measurement.created_at.desc()).limit(limit)
-            measurements = session.exec(statement).all()
-            return [
-                {
-                    "id": m.id,
-                    "sensor_id": m.sensor_id,
-                    "sensor_name": m.sensor.name if m.sensor else "Unknown",
-                    "pressure": m.pressure,
-                    "timestamp": m.created_at.isoformat()
-                }
-                for m in measurements
-            ]
+        statement = select(Measurement).order_by(Measurement.created_at.desc()).limit(limit)
+        measurements = session.exec(statement).all()
+        return [
+            {
+                "id": m.id,
+                "sensor_id": m.sensor_id,
+                "sensor_name": m.sensor.name if m.sensor else "Unknown",
+                "pressure": m.pressure,
+                "timestamp": m.created_at.isoformat()
+            }
+            for m in measurements
+        ]
     except Exception as e:
         logger.error(f"Error retrieving measurements: {e}", exc_info=True)
-        return {"error": str(e)}, 500
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.websocket("/ws")

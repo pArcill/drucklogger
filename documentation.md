@@ -97,3 +97,4 @@ After brief consideration, we concluded that since the tasks mostly build up on 
 <li>2026/02/18, branch Martin</li>
 <li>wrote instruction file</li>
 <li>moved the frontend HTML files as well as database.py into the correct directory, respectively</li>
+<li>got on the same wavelength, so to speak</li>
