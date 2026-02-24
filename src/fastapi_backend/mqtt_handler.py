@@ -9,10 +9,6 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 from sqlmodel import Session, select
 
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
 from postgres_database.database import engine
 from .models import Sensor, Measurement
 
@@ -25,7 +21,7 @@ class MQTTHandler:
     """
     Handles MQTT connections and message processing for sensor data
     """
-    def __init__(self, broker: str, port: int, broadcast_callback=None):
+    def __init__(self, broker: str, port: int, broadcast_callback=None, event_loop=None):
         self.broker = broker
         self.port = port
         self.client = mqtt.Client()
@@ -35,6 +31,7 @@ class MQTTHandler:
         self.is_running = False
         self._thread = None
         self.broadcast_callback = broadcast_callback
+        self.event_loop = event_loop
         
     def _on_connect(self, client, userdata, flags, rc):
         """Callback when connected to MQTT broker"""
@@ -172,7 +169,7 @@ class MQTTHandler:
                 logger.debug(f"Saved measurement: sensor_id={sensor.id}, pressure={pressure}")
                 
                 # Broadcast to WebSocket clients
-                if self.broadcast_callback:
+                if self.broadcast_callback and self.event_loop:
                     broadcast_data = {
                         "type": "measurement",
                         "sensor_id": sensor.id,
@@ -181,7 +178,11 @@ class MQTTHandler:
                         "pressure": pressure,
                         "timestamp": measurement.created_at.isoformat()
                     }
-                    asyncio.create_task(self.broadcast_callback(broadcast_data))
+                    # Use run_coroutine_threadsafe to schedule coroutine from this thread
+                    asyncio.run_coroutine_threadsafe(
+                        self.broadcast_callback(broadcast_data),
+                        self.event_loop
+                    )
                 
         except Exception as e:
             logger.error(f"Error handling measurement data: {e}", exc_info=True)
