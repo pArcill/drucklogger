@@ -3,19 +3,19 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from sqlmodel import Session, select
 
-import sys
-import os
+# Add parent directory to path for imports (useful for local development)
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from postgres_database.database import create_db_and_tables, engine, get_session
-from .mqtt_handler import MQTTHandler
-from .models import Measurement
+from postgres_database.database import create_db_and_tables, engine
+from fastapi_backend.mqtt_handler import MQTTHandler
+from fastapi_backend.models import Measurement
 
 # Configure logging
 logging.basicConfig(
@@ -66,7 +66,9 @@ async def lifespan(app: FastAPI):
     mqtt_port = int(os.getenv("MQTT_PORT", "1883"))
     
     logger.info(f"Initializing MQTT handler for {mqtt_broker}:{mqtt_port}")
-    mqtt_handler = MQTTHandler(mqtt_broker, mqtt_port, broadcast_callback=manager.broadcast)
+    # Get the running event loop to pass to the MQTT handler
+    event_loop = asyncio.get_running_loop()
+    mqtt_handler = MQTTHandler(mqtt_broker, mqtt_port, broadcast_callback=manager.broadcast, event_loop=event_loop)
     mqtt_handler.start()
     logger.info("Application startup complete")
     

@@ -45,7 +45,9 @@ services:
         restart: unless-stopped
 
     fastapi_backend:
-        build: ./src/fastapi_backend
+        build:
+            context: ./src
+            dockerfile: ./fastapi_backend/Dockerfile
         container_name: fastapi_backend
         ports:
             - "${API_PORT}:8000"

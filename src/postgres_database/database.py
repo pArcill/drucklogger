@@ -19,7 +19,7 @@ def create_db_and_tables():
     """
     Create all database tables
     """
-    from .models import Sensor, Measurement  # Import here to ensure models are registered
+    from fastapi_backend.models import Sensor, Measurement  # Import here to ensure models are registered
     SQLModel.metadata.create_all(engine)
 
 
