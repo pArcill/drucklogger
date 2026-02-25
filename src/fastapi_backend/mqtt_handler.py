@@ -173,10 +173,10 @@ class MQTTHandler:
                     broadcast_data = {
                         "type": "measurement",
                         "sensor_id": sensor.id,
-                        "mac_address": sensor.mac_address,
+                        "mac": sensor.mac_address,
                         "sensor_name": sensor.name,
                         "pressure": pressure,
-                        "timestamp": measurement.created_at.isoformat()
+                        "timestamp": measurement.created_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
                     }
                     # Use run_coroutine_threadsafe to schedule coroutine from this thread
                     asyncio.run_coroutine_threadsafe(

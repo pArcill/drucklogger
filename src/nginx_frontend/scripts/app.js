@@ -42,8 +42,17 @@ const selectors = {
 };
 
 function createHttpApi(baseUrl) {
+  const normalizedBase = (baseUrl || '').replace(/\/+$/, '');
+  const buildPath = (path) => {
+    if (!path) {
+      return normalizedBase || '/';
+    }
+    const segment = path.startsWith('/') ? path : `/${path}`;
+    return `${normalizedBase}${segment}` || segment;
+  };
+
   const fetchJson = async (path) => {
-    const response = await fetch(`${baseUrl}${path}`);
+    const response = await fetch(buildPath(path));
     if (!response.ok) {
       throw new Error(`Request failed: ${response.status}`);
     }
@@ -51,9 +60,19 @@ function createHttpApi(baseUrl) {
   };
 
   const buildWsUrl = () => {
-    const url = new URL(baseUrl);
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${url.origin}/ws/measurements`;
+    let origin;
+    if (normalizedBase.startsWith('http')) {
+      try {
+        origin = new URL(normalizedBase).origin;
+      } catch (error) {
+        console.warn('Falling back to window origin for WebSocket URL', error);
+        origin = window.location.origin;
+      }
+    } else {
+      origin = window.location.origin;
+    }
+    const wsOrigin = origin.startsWith('https') ? origin.replace('https', 'wss') : origin.replace('http', 'ws');
+    return `${wsOrigin}/ws`;
   };
 
   return {
