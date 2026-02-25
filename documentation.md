@@ -102,3 +102,7 @@ After brief consideration, we concluded that since the tasks mostly build up on 
 <li>2026/02/24, branch Martin</li>
 <li>fixed imports in fastapi_backend.py and database.py</li>
 <li>got on the same wavelength, so to speak</li>
+<h3>2026/02/24</h3>
+<li>Redesigned the nginx_frontend to use modular CSS/JS, Leaflet mapping, and mock data hooks.</li>
+<li>Added Vitest-based unit tests for the analytics helpers (`src/nginx_frontend/tests`).</li>
+<li>Documented contributor guidance in docs/frontend.md and ensured node tooling stays isolated from Docker build artifacts.</li>
