@@ -194,7 +194,7 @@ class MQTTHandler:
                     broadcast_data = {
                         "type": "measurement",
                         "sensor_id": sensor.id,
-                        "mac_address": sensor.mac_address,
+                        "mac": sensor.mac_address,
                         "sensor_name": sensor.name,
                         "pressure": pressure,
                         "out_of_range": out_of_range,

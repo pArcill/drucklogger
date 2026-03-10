@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 # Add parent directory to path for imports (useful for local development)
@@ -15,7 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from postgres_database.database import create_db_and_tables, engine, get_session
 from fastapi_backend.mqtt_handler import MQTTHandler
-from fastapi_backend.models import Measurement
+from fastapi_backend.models import Measurement, Sensor
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +27,14 @@ logger = logging.getLogger(__name__)
 
 # Global MQTT handler instance
 mqtt_handler = None
+
+
+def isoformat_utc(value: datetime | None) -> str | None:
+    """Return an ISO8601 string with UTC offset for consistent client parsing"""
+    if value is None:
+        return None
+    dt = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 # WebSocket connection manager
 class ConnectionManager:
@@ -117,8 +126,9 @@ def get_latest_measurements(limit: int = 100, session: Session = Depends(get_ses
                 "id": m.id,
                 "sensor_id": m.sensor_id,
                 "sensor_name": m.sensor.name if m.sensor else "Unknown",
+                "mac": m.sensor.mac_address if m.sensor else None,
                 "pressure": m.pressure,
-                "timestamp": m.created_at.isoformat()
+                "timestamp": isoformat_utc(m.created_at)
             }
             for m in measurements
         ]
@@ -147,8 +157,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     "type": "historical",
                     "sensor_id": measurement.sensor_id,
                     "sensor_name": measurement.sensor.name if measurement.sensor else "Unknown",
+                    "mac": measurement.sensor.mac_address if measurement.sensor else None,
                     "pressure": measurement.pressure,
-                    "timestamp": measurement.created_at.isoformat()
+                    "timestamp": isoformat_utc(measurement.created_at)
                 })
         
         # Keep connection open
@@ -164,3 +175,42 @@ async def websocket_endpoint(websocket: WebSocket):
             manager.disconnect(websocket)
         except:
             pass
+
+
+@app.get("/api/sensors")
+def get_sensors(session: Session = Depends(get_session)):
+    """Return all registered sensors with last-seen metadata"""
+    try:
+        latest_measurements = (
+            select(
+                Measurement.sensor_id,
+                func.max(Measurement.created_at).label("last_seen")
+            )
+            .group_by(Measurement.sensor_id)
+            .subquery()
+        )
+
+        statement = (
+            select(Sensor, latest_measurements.c.last_seen)
+            .outerjoin(latest_measurements, Sensor.id == latest_measurements.c.sensor_id)
+            .order_by(Sensor.id)
+        )
+
+        rows = session.exec(statement).all()
+        sensors = []
+        for sensor, last_seen in rows:
+            sensors.append({
+                "id": sensor.id,
+                "mac": sensor.mac_address,
+                "name": sensor.name,
+                "location": f"{sensor.latitude:.4f}, {sensor.longitude:.4f}",
+                "latitude": sensor.latitude,
+                "longitude": sensor.longitude,
+                "battery": sensor.battery_level,
+                "last_seen": isoformat_utc(last_seen) if last_seen else None,
+            })
+
+        return sensors
+    except Exception as e:
+        logger.error(f"Error retrieving sensors: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
