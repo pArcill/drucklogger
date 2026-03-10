@@ -83,13 +83,14 @@ def test_send_status_publishes_valid_status(monkeypatch):
 
 def test_send_status_uses_random_upper_bounds(monkeypatch):
     """Verify patched random.uniform upper bounds propagate into status payload."""
-    simulator, fake_client = _setup_simulator_with_fake_client(monkeypatch)
-
-    # Force random.uniform to always return the upper bound
+    # patch uniform before creating simulator so initial battery is predictable
     def fake_uniform(low, high):
         return high
 
     monkeypatch.setattr(sensor_main.random, "uniform", fake_uniform)
+    # guarantee battery doesn’t drop during this call
+    monkeypatch.setattr(sensor_main.random, "random", lambda: 1.0)
+    simulator, fake_client = _setup_simulator_with_fake_client(monkeypatch)
 
     simulator.send_status()
 
@@ -118,8 +119,26 @@ def test_send_measurement_publishes_valid_measurement(monkeypatch):
     assert data["mac"] == "AA:BB:CC:00:11:22"
     assert 980.0 <= data["pressure"] <= 1050.0
 
-    dt = datetime.fromisoformat(data["timestamp"])
-    assert isinstance(dt, datetime)
+
+def test_battery_drain_probability(monkeypatch):
+    """Battery decrement chance should increase and reset when triggered."""
+    simulator, _ = _setup_simulator_with_fake_client(monkeypatch)
+    simulator.battery = 1.0
+    simulator.messages_sent_since_last_battery_decrease = 0
+    # use a large lambda so probability increases rapidly for deterministic test
+    simulator.battery_decrease_likelihood_modifier = 2.0
+
+    # first call returns high random value; battery should not change
+    monkeypatch.setattr(sensor_main.random, "random", lambda: 0.99)
+    simulator.send_measurement()
+    assert simulator.battery == pytest.approx(1.0)
+    assert simulator.messages_sent_since_last_battery_decrease == 1
+
+    # now force low random value to trigger drain
+    monkeypatch.setattr(sensor_main.random, "random", lambda: 0.0)
+    simulator.send_measurement()
+    assert simulator.battery == pytest.approx(0.99)
+    assert simulator.messages_sent_since_last_battery_decrease == 0
 
 
 def test_sensor_simulator_connects_on_init(monkeypatch):

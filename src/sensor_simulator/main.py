@@ -3,10 +3,14 @@ from datetime import datetime
 
 import json
 import logging
+import logging.handlers
 import os
 import random
 import time
+import math
 import paho.mqtt.client as mqtt
+import sys
+import traceback
 
 """
 A sensor simulator sending simulated sensor data
@@ -16,11 +20,52 @@ Date:	2026/01/21
 """
 
 # Configure logging
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR = os.path.join(BASE_DIR, "crashlogs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# main logger
+log_path = os.path.join(LOG_DIR, "pressure_logger.log")
 logging.basicConfig(
 	level=os.getenv("LOG_LEVEL", "INFO"),
-	format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+	format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+	handlers=[
+		logging.StreamHandler(),
+		logging.handlers.WatchedFileHandler(log_path)
+	]
 )
 logger = logging.getLogger(__name__)
+
+
+# crash logger
+def handle_crash(exc_type, exc_value, exc_tb):
+    # Skip KeyboardInterrupt (Ctrl+C) — not a real crash
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    crash_path = os.path.join(LOG_DIR, f"crash_{timestamp}.log")
+
+    crash_logger = logging.getLogger("crash")
+    crash_handler = logging.FileHandler(crash_path)
+    crash_handler.setFormatter(logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s"
+    ))
+    crash_logger.addHandler(crash_handler)
+    crash_logger.setLevel(logging.DEBUG)
+
+    crash_logger.critical("Unhandled exception — application crashed")
+    crash_logger.critical("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+
+    # Also write crash to the main app log
+    logger.critical("Crash report written to: %s", crash_path)
+
+    crash_handler.flush()
+    crash_handler.close()
+
+sys.excepthook = handle_crash
+
 
 """
 Topic: sensors/status
@@ -79,6 +124,17 @@ class SensorSimulator:
 		self.client.on_disconnect = self._on_disconnect
 		self._connect_with_retry()
 		self.client.loop_start()
+		# likelihood modifier used by _maybe_decrease_battery; smaller means
+		# slower accumulation of probability.  A realistic value might be
+		# ~0.005 so that it takes dozens of messages before drain becomes
+		# likely.  This is tunable for different sensor characteristics.
+		self.battery_decrease_likelihood_modifier = 0.005
+		self.messages_sent_since_last_battery_decrease = 0
+		self.battery = random.uniform(0.2, 1.0)
+		self.latitude = 47.8095 + random.uniform(-0.01, 0.01)
+		self.longitude = 13.0550 + random.uniform(-0.01, 0.01)
+
+		self.expected_range = [980.0, 1050.0]
 
 	def _connect_with_retry(self, max_retries=10, initial_delay=1):
 		"""Connect to MQTT broker with exponential backoff retry"""
@@ -117,33 +173,72 @@ class SensorSimulator:
 		"""
 		Sends simulated sensor status
 		"""
+		if self.battery <= 0:
+			logger.debug(f"Battery of sensor {self.mac} is dead, cannot send status")
+			return
 		status = SensorStatus(
 			mac=self.mac,
-			battery=random.uniform(0.2, 1.0),
-			latitude=47.8095 + random.uniform(-0.01, 0.01),
-			longitude=13.0550 + random.uniform(-0.01, 0.01),
+			battery=self.battery,
+			latitude=self.latitude,
+			longitude=self.longitude,
 			timestamp=datetime.now().isoformat()
 		)
 		self.client.publish("sensors/status", json.dumps(asdict(status)))
 		logger.info(f"Sensor {self.mac} sent status: battery={status.battery:.2f}, location=({status.latitude:.4f}, {status.longitude:.4f})")
+		# battery usage may happen on either status or measurement send
+		self._maybe_decrease_battery()
+			
 
 	def send_measurement(self):
 		"""
 		Sends simulated measurement data
 		"""
+		# do not send if battery is dead
+		if self.battery <= 0:
+			logger.debug(f"Battery of sensor {self.mac} is dead; cannot send measurement")
+			return
+		# sample pressure from normal distribution centered on range midpoint
+		mean = sum(self.expected_range) / 2
+		std_dev = (self.expected_range[1] - self.expected_range[0]) / 4
+		pressure = random.gauss(mean, std_dev)
+		is_in_range = self.expected_range[0] <= pressure <= self.expected_range[1]
 		measurement = MeasurementData(
 			mac=self.mac,
-			pressure=random.uniform(980.0, 1050.0),
+			pressure=pressure,
 			timestamp=datetime.now().isoformat()
 		)
-		self.client.publish("measurement/data", json.dumps(asdict(measurement)))
-		logger.debug(f"Sensor {self.mac} sent measurement: {measurement.pressure:.2f} hPa")
+		# include out-of-range indicator in the published message
+		measurement_dict = asdict(measurement)
+		measurement_dict['out_of_range'] = not is_in_range
+		self.client.publish("measurement/data", json.dumps(measurement_dict))
+		logger.debug(f"Sensor {self.mac} sent measurement: {measurement.pressure:.2f} hPa (in_range={is_in_range})")
+		# possibility of draining battery on each packet
+		self._maybe_decrease_battery()
 	
 	def disconnect(self):
 		"""Disconnect from MQTT broker"""
 		logger.info(f"Disconnecting sensor {self.mac}")
 		self.client.loop_stop()
 		self.client.disconnect()
+
+	def _maybe_decrease_battery(self, amount: float = 0.01):
+		"""Decide whether to lower battery based on message count.
+
+		Probability starts near zero and asymptotically approaches 1 as
+		`messages_sent_since_last_battery_decrease` grows.  After a drop we
+		reset the counter.  This gives a realistic feeling of occasional
+		battery use without a decrement on every transmission.
+		"""
+		# increment before computing probability so first call has nonzero chance
+		self.messages_sent_since_last_battery_decrease += 1
+		# Use an exponential CDF: p = 1 - exp(-lambda * n)
+		lam = self.battery_decrease_likelihood_modifier
+		p = 1 - math.exp(-lam * self.messages_sent_since_last_battery_decrease)
+		if random.random() < p:
+			old = self.battery
+			self.battery = max(0, self.battery - amount)
+			logger.debug(f"Battery drain triggered for sensor {self.mac}: {old:.3f} -> {self.battery:.3f}")
+			self.messages_sent_since_last_battery_decrease = 0
 
 def main():
 	# Get configuration from environment
@@ -172,11 +267,14 @@ def main():
 				sensor.send_measurement()
 			measurement_counter += 1
 			
-			# Send status every 5 minutes (300 seconds)
-			if measurement_counter % 300 == 0:
+			# Send status every 10 seconds
+			# This may be a bit unrealistic, but I thought a shorter time might be better for
+			# testing and observation purposes.
+			if measurement_counter % 10 == 0:
 				for sensor in sensors:
 					sensor.send_status()
 				logger.info("Status update sent for all sensors")
+			
 			
 			time.sleep(1)
 	

@@ -29,6 +29,7 @@ class Measurement(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     sensor_id: int = Field(foreign_key="sensors.id")
     pressure: float
+    out_of_range: bool = Field(default=False)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
     # Relationship to sensor

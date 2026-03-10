@@ -94,11 +94,23 @@ After brief consideration, we concluded that since the tasks mostly build up on 
 <li><b>Branch Martin:</b> added HTML file for the frontend; adjusted backend's main.py as well as MQTT to use WebSockets and redirect traffic there</li>
 
 
-<li>2026/02/18, branch Martin</li>
+<h3>2026/02/18, branch Martin</h3>
 <li>wrote instruction file</li>
 <li>moved the frontend HTML files as well as database.py into the correct directory, respectively</li>
 
 
-<li>2026/02/24, branch Martin</li>
+<h3>2026/02/24, branch Martin</h3>
 <li>fixed imports in fastapi_backend.py and database.py</li>
 <li>got on the same wavelength, so to speak</li>
+
+<li>TODO: logs, logins, map</li>
+
+<h3>2026/03/03, branch Martin</h3>
+<li>Improved sensor simulators to have set coordinates and realistically updated batteries; a sensor stops sending data and its status when its battery is dead</li>
+<li>Adjusted frontend prototype to show status readings</li>
+
+<h3>2026/03/04, branch Martin</h3>
+<li>Fixed the battery depletion simulation system to not actually sap the sensor every single second</li>
+
+<h3>2026/03/10</h3>
+<li></li>

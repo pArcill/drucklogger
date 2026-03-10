@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 # Add parent directory to path for imports (useful for local development)
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from postgres_database.database import create_db_and_tables, engine
+from postgres_database.database import create_db_and_tables, engine, get_session
 from fastapi_backend.mqtt_handler import MQTTHandler
 from fastapi_backend.models import Measurement
 

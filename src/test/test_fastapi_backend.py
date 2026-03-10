@@ -248,6 +248,64 @@ def test_health_check(client: TestClient):
     assert ('status', 'healthy') in response.json().items()
 
 
+def test_handle_sensor_status_broadcast_and_db(session: Session):
+    """Ensure MQTTHandler creates/updates sensor and sends a status message via callback"""
+    import asyncio
+    from fastapi_backend.mqtt_handler import MQTTHandler
+    from postgres_database import database as dbmod
+    import fastapi_backend.mqtt_handler as mh
+
+    # point handler and database module at our in-memory test engine
+    dbmod.engine = session.bind
+    mh.engine = session.bind
+
+    received = []
+    async def fake_broadcast(msg):
+        # simply append; run_coroutine_threadsafe will schedule it
+        received.append(msg)
+
+    # create and set an event loop for run_coroutine_threadsafe to use
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    handler = MQTTHandler("test-broker", 1883, broadcast_callback=fake_broadcast, event_loop=loop)
+
+    # prepare status payload
+    payload = {
+        "mac": "AA:BB:CC:00:11:22",
+        "battery": 0.42,
+        "latitude": 47.0,
+        "longitude": 8.0,
+        "timestamp": "2026-03-03T12:00:00Z"
+    }
+
+    # call the handler directly; it will commit using the patched engine
+    handler._handle_sensor_status(payload)
+
+    # confirm the sensor was inserted in the database
+    from fastapi_backend.models import Sensor
+    from sqlmodel import select
+    with session:
+        sensor = session.exec(select(Sensor).where(Sensor.mac_address == payload["mac"])) .first()
+        assert sensor is not None
+        assert sensor.battery_level == pytest.approx(0.42)
+        assert sensor.latitude == pytest.approx(47.0)
+        assert sensor.longitude == pytest.approx(8.0)
+
+    # the broadcast callback is scheduled asynchronously; give the loop a moment
+    # retrieving the result of run_coroutine_threadsafe will block until completion.
+    # Since we don't have a handle to the future, we can simply allow the event loop
+    # to cycle by running a no-op coroutine.
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(asyncio.sleep(0))
+
+    assert len(received) == 1
+    status_msg = received[0]
+    assert status_msg["type"] == "status"
+    assert status_msg["sensor_name"] == sensor.name
+    assert status_msg["battery"] == pytest.approx(0.42)
+    assert status_msg["sensor_id"] == sensor.id
+
+
 def test_api_has_openapi_docs(client: TestClient):
     """Test that OpenAPI documentation is available"""
     response = client.get("/docs")

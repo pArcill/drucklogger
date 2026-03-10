@@ -115,10 +115,29 @@ class MQTTHandler:
                         longitude=longitude if longitude is not None else 0.0
                     )
                     session.add(sensor)
+                    session.commit()  # flush so we get an id on the object
+                    session.refresh(sensor)
                     logger.info(f"Created new sensor {mac}")
                 
                 session.commit()
                 logger.debug(f"Successfully saved sensor status for {mac}")
+                
+                # broadcast status update to websocket clients if available
+                if self.broadcast_callback and self.event_loop:
+                    broadcast_data = {
+                        "type": "status",
+                        "sensor_id": sensor.id,
+                        "mac_address": sensor.mac_address,
+                        "sensor_name": sensor.name,
+                        "battery": sensor.battery_level,
+                        "latitude": sensor.latitude,
+                        "longitude": sensor.longitude,
+                        "timestamp": timestamp or datetime.now(timezone.utc).isoformat()
+                    }
+                    asyncio.run_coroutine_threadsafe(
+                        self.broadcast_callback(broadcast_data),
+                        self.event_loop
+                    )
                 
         except Exception as e:
             logger.error(f"Error handling sensor status: {e}", exc_info=True)
@@ -132,12 +151,13 @@ class MQTTHandler:
             mac = data.get("mac")
             pressure = data.get("pressure")
             timestamp_str = data.get("timestamp")
+            out_of_range = data.get("out_of_range", False)
             
             if not mac or pressure is None:
                 logger.error("Measurement data missing MAC address or pressure")
                 return
             
-            logger.info(f"Processing measurement for sensor {mac}: {pressure} hPa")
+            logger.info(f"Processing measurement for sensor {mac}: {pressure} hPa (out_of_range={out_of_range})")
             
             with Session(engine) as session:
                 # Find or create sensor
@@ -162,11 +182,12 @@ class MQTTHandler:
                 measurement = Measurement(
                     sensor_id=sensor.id,
                     pressure=pressure,
+                    out_of_range=out_of_range,
                     created_at=datetime.now(timezone.utc)
                 )
                 session.add(measurement)
                 session.commit()
-                logger.debug(f"Saved measurement: sensor_id={sensor.id}, pressure={pressure}")
+                logger.debug(f"Saved measurement: sensor_id={sensor.id}, pressure={pressure}, out_of_range={out_of_range}")
                 
                 # Broadcast to WebSocket clients
                 if self.broadcast_callback and self.event_loop:
@@ -176,6 +197,7 @@ class MQTTHandler:
                         "mac_address": sensor.mac_address,
                         "sensor_name": sensor.name,
                         "pressure": pressure,
+                        "out_of_range": out_of_range,
                         "timestamp": measurement.created_at.isoformat()
                     }
                     # Use run_coroutine_threadsafe to schedule coroutine from this thread
