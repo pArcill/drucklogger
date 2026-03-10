@@ -19,19 +19,13 @@
     <div class="noscript">JavaScript is required to render the dashboard preview.</div>
   </noscript>
   <div class="page">
-    <header class="hero">
-      <p class="hero__eyebrow">IoT Pressure Logger · Frontend preview</p>
-      <h1>Atmospheric telemetry without the guesswork</h1>
-      <p class="hero__lede">
-        This dashboard currently runs against a simulated data service so the interface can be verified without a
-        backend connection. Once the API is ready simply disable mock mode and the UI will hydrate with real values.
-      </p>
-      <div class="hero__status" id="connectionStatus" role="status">Bootstrapping mock data stream</div>
-      <div class="hero__actions">
+    <div class="toolbar" aria-label="Dashboard controls">
+      <div class="toolbar__status" id="connectionStatus" role="status">Bootstrapping mock data stream</div>
+      <div class="toolbar__actions">
         <button class="chip chip--primary" data-action="refresh" type="button">Manual refresh</button>
         <span class="chip chip--ghost" id="lastUpdated">Last sync pending</span>
       </div>
-    </header>
+    </div>
 
     <main class="layout">
       <section class="panel stats" aria-label="Global pressure statistics">
@@ -90,16 +84,6 @@
           </select>
         </div>
         <div id="sensorGrid" class="sensor-grid" aria-live="polite"></div>
-      </section>
-
-      <section class="panel timeline" aria-label="Recent measurements">
-        <div class="panel__header">
-          <div>
-            <p class="panel__eyebrow">Timeline</p>
-            <h2>Most recent readings</h2>
-          </div>
-        </div>
-        <ol id="measurementFeed" class="timeline__list" aria-live="polite"></ol>
       </section>
     </main>
   </div>
