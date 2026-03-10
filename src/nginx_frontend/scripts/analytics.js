@@ -43,7 +43,7 @@ export function formatPressure(value, fallback = '--') {
   if (typeof value !== 'number' || Number.isNaN(value)) {
     return fallback;
   }
-  return `${value.toFixed(2)} kPa`;
+  return `${value.toFixed(2)} hPa`;
 }
 
 export function formatBattery(value, fallback = '--') {

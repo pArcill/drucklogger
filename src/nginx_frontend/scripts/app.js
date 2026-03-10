@@ -7,7 +7,7 @@ import {
 } from './analytics.js';
 import { createMockApi } from './mockApi.js';
 
-const PRESSURE_SAFE_RANGE = { min: 98, max: 105 }; // kPa boundaries for a healthy reading
+const PRESSURE_SAFE_RANGE = { min: 98, max: 105 }; // hPa boundaries for a healthy reading
 const BATTERY_LOW_THRESHOLD = 0.25; // 25%
 const BATTERY_CRITICAL_THRESHOLD = 0.12; // 12%
 
@@ -234,8 +234,8 @@ function deriveSensorStatus(sensor) {
   }
 
   if (typeof pressure === 'number') {
-    const outOfRange = pressure < PRESSURE_SAFE_RANGE.min || pressure > PRESSURE_SAFE_RANGE.max;
-    if (outOfRange) {
+    //const outOfRange = pressure < PRESSURE_SAFE_RANGE.min || pressure > PRESSURE_SAFE_RANGE.max;
+    if (sensor.out_of_range) {
       flags.push({ level: 'warning', label: 'Unusual pressure' });
     }
   }
