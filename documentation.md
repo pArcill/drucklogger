@@ -113,4 +113,9 @@ After brief consideration, we concluded that since the tasks mostly build up on 
 <li>Fixed the battery depletion simulation system to not actually sap the sensor every single second</li>
 
 <h3>2026/03/10</h3>
-<li></li>
+<li>merged with Paolo</li>
+<li>branched off into "logging"</li>
+<li>bound corresponding crashlog folder on host to all container volumes</li>
+
+<h3>2026/03/24</h3>
+<li>fixed logging such that regular logs are written to project_directory/logs/logfile.log and crashlogs to project_directory/crashlogs</li>

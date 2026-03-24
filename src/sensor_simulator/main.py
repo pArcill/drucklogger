@@ -21,7 +21,7 @@ Date:	2026/01/21
 
 # Configure logging
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_DIR = os.path.join(BASE_DIR, "crashlogs")
+LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # main logger
@@ -45,26 +45,49 @@ def handle_crash(exc_type, exc_value, exc_tb):
         return
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    crash_path = os.path.join(LOG_DIR, f"crash_{timestamp}.log")
+    # Option 1 (recommended - cleanest):
+    crash_dir = os.path.abspath(os.path.join(LOG_DIR, "..", "crashlogs"))
 
+
+    os.makedirs(crash_dir, exist_ok=True)
+
+    crash_filename = f"crash_{timestamp}.log"
+    crash_path = os.path.join(crash_dir, crash_filename)
+
+    # Create a dedicated crash logger
     crash_logger = logging.getLogger("crash")
-    crash_handler = logging.FileHandler(crash_path)
+    crash_logger.setLevel(logging.DEBUG)
+
+    # Remove any old handlers to avoid duplicates
+    for handler in crash_logger.handlers[:]:
+        crash_logger.removeHandler(handler)
+
+    crash_handler = logging.FileHandler(crash_path, mode='w', encoding='utf-8')
     crash_handler.setFormatter(logging.Formatter(
         "%(asctime)s - %(levelname)s - %(message)s"
     ))
     crash_logger.addHandler(crash_handler)
-    crash_logger.setLevel(logging.DEBUG)
 
-    crash_logger.critical("Unhandled exception — application crashed")
+    # Log the crash
+    crash_logger.critical("=== UNHANDLED EXCEPTION - APPLICATION CRASHED ===")
     crash_logger.critical("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
 
-    # Also write crash to the main app log
-    logger.critical("Crash report written to: %s", crash_path)
+    # Also inform the main logger
+    logger.critical("Application crashed! Full crash report written to: %s", crash_path)
 
     crash_handler.flush()
     crash_handler.close()
 
+    # Optional: re-raise so Docker sees the container as crashed
+    sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
 sys.excepthook = handle_crash
+
+
+if os.getenv("SIMULATE_CRASH", "0") == "1":
+    logger.error("Simulating a crash for testing...")
+    raise RuntimeError("Intentional crash for crash-logging test\nAdjust sensor_simulator's environment variable SIMULATE_CRASH in docker-compose.yml to circumvent this.")
 
 
 """
