@@ -3,6 +3,21 @@ from typing import Optional
 from sqlmodel import Field, SQLModel, Relationship
 
 
+class User(SQLModel, table=True):
+    """
+    Database model for a user account
+    """
+    __tablename__ = "users"
+    
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True, max_length=100)
+    email: str = Field(unique=True, index=True, max_length=255)
+    hashed_password: str
+    role: str = Field(default="regular", max_length=50)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    is_active: bool = Field(default=True)
+
+
 class Sensor(SQLModel, table=True):
     """
     Database model for a sensor device
@@ -14,7 +29,10 @@ class Sensor(SQLModel, table=True):
     name: str = Field(max_length=100)
     latitude: float
     longitude: float
+    altitude: float = Field(default=0.0)  # Meters above sea level
     battery_level: float = Field(ge=0.0, le=1.0)
+    display_clearance: str = Field(default="regular", max_length=50)  # Who can see the sensor on map
+    readings_clearance: str = Field(default="regular", max_length=50)  # Who can view readings
     
     # Relationship to measurements
     measurements: list["Measurement"] = Relationship(back_populates="sensor")
@@ -34,3 +52,20 @@ class Measurement(SQLModel, table=True):
     
     # Relationship to sensor
     sensor: Optional[Sensor] = Relationship(back_populates="measurements")
+
+
+# ============================================================================
+# Request/Response Models (not database tables)
+# ============================================================================
+
+class RegisterRequest(SQLModel):
+    """Request model for user registration"""
+    username: str
+    email: str
+    password: str
+
+
+class LoginRequest(SQLModel):
+    """Request model for user login"""
+    username: str
+    password: str

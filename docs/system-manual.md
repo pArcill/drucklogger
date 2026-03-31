@@ -2,12 +2,13 @@
 
 ## Purpose
 
-This guide explains how to start the IoT Pressure Logger system with Docker Compose and verify that the main services are running.
+This guide explains how to start the IoT Pressure Logger system with Docker Compose, manage user accounts and permissions, and verify that the main services are running.
 
 ## Prerequisites
 
 - Docker Desktop or Docker Engine with Docker Compose support
 - A local copy of this repository
+- Basic knowledge of UNIX/PowerShell command line
 
 ## Environment Setup
 
@@ -32,6 +33,8 @@ Important variables:
 - `POSTGRES_PORT`: external PostgreSQL port, default `5432`
 - `MQTT_TCP_PORT`: external MQTT port, default `1883`
 - `MQTT_WS_PORT`: external MQTT WebSocket port, default `9001`
+- `SECRET_KEY`: JWT secret for authentication (set a strong random value in production)
+- `TOKEN_EXPIRE_MINUTES`: JWT token expiration time, default `1440` (24 hours)
 
 ## Start The System
 
@@ -71,6 +74,251 @@ docker compose logs -f mqtt_broker
 
 If you changed the values in `.env`, replace the ports above with your configured values.
 
+---
+
+# Authentication Guide
+
+## Login and Registration
+
+When you first visit the application at `http://localhost:80`, you will see a login/register screen.
+
+### Register a New Account
+
+1. Click the **"Don't have an account? Register here"** link
+2. Enter a **username** (minimum 3 characters)
+3. Enter an **email** address (must contain @)
+4. Enter a **password** (minimum 6 characters)
+5. Click **Register**
+
+New accounts are created with the **`regular`** role by default.
+
+### Login to an Existing Account
+
+1. Enter your **username**
+2. Enter your **password**
+3. Click **Login**
+
+The system will generate a JWT token valid for 24 hours (configurable via `TOKEN_EXPIRE_MINUTES`).
+
+### Logout
+
+Click the **Logout** button in the top-right corner of the dashboard to clear your session.
+
+---
+
+# Account Permissions and Role Hierarchy
+
+## Overview
+
+The system implements a hierarchical role-based access control (RBAC) system. Each user has a **role** that determines what sensors and measurements they can view. Each sensor has two independent **clearance levels** that control who can see and access that sensor's data.
+
+## Role Hierarchy
+
+Roles are ranked from lowest to highest privilege:
+
+1. **`guest`** - Lowest privilege (reserved for unauthenticated access)
+2. **`regular`** - Default role for new users
+3. **`elevated`** - Enhanced access for trusted operators
+4. **`full_clearance`** - Administrative-level access
+5. **`top_secret`** - Highest privilege (restricted data)
+
+**Key principle**: A user with a higher role can access ALL data that users of lower roles can access.
+
+### Example Role Access Chain
+
+- A user with role **`elevated`** can access data restricted to `regular` or `elevated` clearance
+- A user with role **`full_clearance`** can access data from `guest`, `regular`, `elevated`, and `full_clearance` sensors
+- A user with role **`top_secret`** can access ALL sensors
+
+## Sensor Clearance Levels
+
+Each sensor has two clearance attributes:
+
+### 1. `display_clearance`
+
+Controls **visibility** of the sensor on the dashboard map and sensor list.
+
+- Only users with a role ≥ the sensor's `display_clearance` will see the sensor at all
+- Default: `regular` (all logged-in users can see)
+- If a user lacks `display_clearance`, the sensor is completely hidden from their view
+
+### 2. `readings_clearance`
+
+Controls **access to sensor data** (pressure measurements, battery level, altitude).
+
+- Even if a user can see a sensor, they may not be able to read its measurements
+- Users lacking `readings_clearance` will see "---" for data fields
+- Default: `regular` (all logged-in users can read)
+- Shows a warning: ⚠ **Insufficient clearance for readings**
+
+### Example Configuration
+
+A sensor with:
+- `display_clearance = "elevated"`
+- `readings_clearance = "full_clearance"`
+
+Visibility matrix:
+
+| User Role        | See Sensor? | Read Data? |
+| --------------- | ----------- | ---------- |
+| guest           | ❌ No      | ❌ No     |
+| regular         | ❌ No      | ❌ No     |
+| elevated        | ✅ Yes     | ❌ No (insufficient clearance) |
+| full_clearance  | ✅ Yes     | ✅ Yes    |
+| top_secret      | ✅ Yes     | ✅ Yes    |
+
+---
+
+# Managing Account Permissions
+
+## Changing User Roles
+
+**Current limitation**: Role assignment requires direct database modification.
+
+### Via Database (PostgreSQL)
+
+1. Connect to the PostgreSQL container:
+
+   ```bash
+   docker exec -it drucklogger-postgres_database-1 psql -U admin -d sensor_db
+   ```
+
+2. View all users:
+
+   ```sql
+   SELECT id, username, email, role FROM users;
+   ```
+
+3. Update a user's role:
+
+   ```sql
+   UPDATE users SET role = 'elevated' WHERE username = 'john';
+   ```
+
+4. Commit and exit:
+
+   ```sql
+   \q
+   ```
+
+### Via pgAdmin (Optional)
+
+If you have pgAdmin running, you can:
+
+1. Navigate to the PostgreSQL connection
+2. Open the `users` table in the `pressure_db` database
+3. Edit the `role` column for any user
+4. Save changes
+
+## Modifying Sensor Clearance
+
+Sensors start with both `display_clearance` and `readings_clearance` set to `regular`.
+
+### Via Database (PostgreSQL)
+
+1. Connect to the database (as above):
+
+   ```bash
+   docker exec -it drucklogger-postgres_database-1 psql -U admin -d pressure_db
+   ```
+
+2. View all sensors with their clearance levels:
+
+   ```sql
+   SELECT id, name, mac_address, display_clearance, readings_clearance FROM sensors;
+   ```
+
+3. Update a sensor's clearance:
+
+   ```sql
+   UPDATE sensors 
+   SET display_clearance = 'elevated', readings_clearance = 'full_clearance'
+   WHERE name = 'Sensor A';
+   ```
+
+4. Verify the change:
+
+   ```sql
+   SELECT * FROM sensors WHERE name = 'Sensor A';
+   ```
+
+### Clearance Configuration Examples
+
+**Public sensor** (everyone can see and read):
+```sql
+UPDATE sensors 
+SET display_clearance = 'guest', readings_clearance = 'guest'
+WHERE name = 'Public Sensor';
+```
+
+**Restricted visibility** (only elevated+ can see it exists):
+```sql
+UPDATE sensors 
+SET display_clearance = 'elevated', readings_clearance = 'regular'
+WHERE name = 'Internal Sensor';
+```
+
+**Top-secret sensor** (only top_secret role can access):
+```sql
+UPDATE sensors 
+SET display_clearance = 'top_secret', readings_clearance = 'top_secret'
+WHERE name = 'Classified Sensor';
+```
+
+---
+
+## Principal: Calculating Average Pressure
+
+When a user views average pressure statistics:
+
+- Only measurements from sensors where the user has `readings_clearance` are included
+- Measurements the user cannot access are excluded from the calculation
+- Users with higher roles see more complete averages
+
+---
+
+# Troubleshooting
+
+## Authentication Issues
+
+### "Invalid username or password"
+
+- Verify the username and password are correct
+- Check that the user account was successfully registered
+- Ensure the database is running: `docker compose ps` should show `postgres_database` as healthy
+
+### "User account is inactive"
+
+- The user's `is_active` field is set to `false` in the database
+- Re-enable the user:
+
+  ```bash
+  docker exec -it drucklogger-postgres_database-1 psql -U admin -d pressure_db
+  UPDATE users SET is_active = true WHERE username = 'john';
+  \q
+  ```
+
+## Permission Issues
+
+### "⚠ Insufficient clearance for readings" on all sensors
+
+- Your user role is lower than the sensors' `readings_clearance` level
+- Ask an administrator to adjust sensor clearance or upgrade your role
+- Check your role: `SELECT role FROM users WHERE username = '<your_username>';`
+
+### Sensors disappearing after update
+
+- You may have updated a sensor's `display_clearance` to a level higher than your role
+- Have an administrator adjust the sensor's clearance level for visibility
+- Check sensor clearance: `SELECT name, display_clearance FROM sensors;`
+
+## Service Connection Issues
+
+- If the backend cannot connect to PostgreSQL, check that `postgres_database` is healthy with `docker compose ps`.
+- If no live data appears, inspect `sensor_simulator` and `mqtt_broker` logs.
+- If the frontend loads but shows no data, check the browser network tab and confirm `fastapi_backend` is reachable on `API_PORT`.
+- MQTT anonymous access is enabled in `mosquitto.conf`; keep that configuration for development only.
+
 ## Stop The System
 
 ```bash
@@ -83,9 +331,13 @@ To also remove named volumes:
 docker compose down -v
 ```
 
-## Troubleshooting
+---
 
-- If the backend cannot connect to PostgreSQL, check that `postgres_database` is healthy with `docker compose ps`.
-- If no live data appears, inspect `sensor_simulator` and `mqtt_broker` logs.
-- If the frontend loads but shows no data, check the browser network tab and confirm `fastapi_backend` is reachable on `API_PORT`.
-- MQTT anonymous access is enabled in `mosquitto.conf`; keep that configuration for development only.
+# Security Notes
+
+- Change `SECRET_KEY` in `.env` to a strong random value in production
+- Use HTTPS in production (configure reverse proxy with SSL certificates)
+- Never commit `.env` with real secrets to version control
+- Use environment-specific `.env` files for development, staging, and production
+- Rotate tokens regularly by restarting the application or setting shorter `TOKEN_EXPIRE_MINUTES`
+- Regularly audit the `users` table for inactive or suspicious accounts

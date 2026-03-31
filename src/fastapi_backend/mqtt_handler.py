@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 
 from postgres_database.database import engine
 from .models import Sensor, Measurement
+from .role_config import DEFAULT_READINGS_CLEARANCE, DEFAULT_DISPLAY_CLEARANCE
 
 # Configure logging
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -83,6 +84,9 @@ class MQTTHandler:
             battery = data.get("battery")
             latitude = data.get("latitude")
             longitude = data.get("longitude")
+            altitude = data.get("altitude", 0.0)
+            display_clearance = data.get("display_clearance", DEFAULT_DISPLAY_CLEARANCE)
+            readings_clearance = data.get("readings_clearance", DEFAULT_READINGS_CLEARANCE)
             timestamp = data.get("timestamp")
             
             if not mac:
@@ -104,20 +108,28 @@ class MQTTHandler:
                         sensor.latitude = latitude
                     if longitude is not None:
                         sensor.longitude = longitude
-                    logger.info(f"Updated sensor {mac} - Battery: {battery}, Location: ({latitude}, {longitude})")
+                    if altitude is not None:
+                        sensor.altitude = altitude
+                    # Always update clearance levels from the sensor
+                    sensor.display_clearance = display_clearance
+                    sensor.readings_clearance = readings_clearance
+                    logger.info(f"Updated sensor {mac} - Battery: {battery}, Location: ({latitude}, {longitude}), Altitude: {altitude}m, Clearance: display={display_clearance}, readings={readings_clearance}")
                 else:
                     # Create new sensor
                     sensor = Sensor(
                         mac_address=mac,
                         name=f"Sensor {mac}",
-                        battery_level=battery if battery is not None else 1.0,
-                        latitude=latitude if latitude is not None else 0.0,
-                        longitude=longitude if longitude is not None else 0.0
+                        battery_level=battery,
+                        latitude=latitude,
+                        longitude=longitude,
+                        altitude=altitude,
+                        display_clearance=display_clearance,
+                        readings_clearance=readings_clearance
                     )
                     session.add(sensor)
                     session.commit()  # flush so we get an id on the object
                     session.refresh(sensor)
-                    logger.info(f"Created new sensor {mac}")
+                    logger.info(f"Created new sensor {mac} with clearance: display={display_clearance}, readings={readings_clearance}")
                 
                 session.commit()
                 logger.debug(f"Successfully saved sensor status for {mac}")
@@ -132,6 +144,7 @@ class MQTTHandler:
                         "battery": sensor.battery_level,
                         "latitude": sensor.latitude,
                         "longitude": sensor.longitude,
+                        "altitude": sensor.altitude,
                         "timestamp": timestamp or datetime.now(timezone.utc).isoformat()
                     }
                     asyncio.run_coroutine_threadsafe(
@@ -152,6 +165,8 @@ class MQTTHandler:
             pressure = data.get("pressure")
             timestamp_str = data.get("timestamp")
             out_of_range = data.get("out_of_range", False)
+            display_clearance = data.get("display_clearance", DEFAULT_DISPLAY_CLEARANCE)
+            readings_clearance = data.get("readings_clearance", DEFAULT_READINGS_CLEARANCE)
             
             if not mac or pressure is None:
                 logger.error("Measurement data missing MAC address or pressure")
@@ -171,12 +186,20 @@ class MQTTHandler:
                         name=f"Sensor {mac}",
                         battery_level=1.0,
                         latitude=0.0,
-                        longitude=0.0
+                        longitude=0.0,
+                        display_clearance=display_clearance,
+                        readings_clearance=readings_clearance
                     )
                     session.add(sensor)
                     session.commit()
                     session.refresh(sensor)
-                    logger.info(f"Created new sensor {mac} from measurement data")
+                    logger.info(f"Created new sensor {mac} from measurement data with clearance: display={display_clearance}, readings={readings_clearance}")
+                else:
+                    # Update clearance levels if sensor already exists
+                    sensor.display_clearance = display_clearance
+                    sensor.readings_clearance = readings_clearance
+                    session.commit()
+                    logger.debug(f"Updated clearance for existing sensor {mac}: display={display_clearance}, readings={readings_clearance}")
                 
                 # Create measurement
                 measurement = Measurement(

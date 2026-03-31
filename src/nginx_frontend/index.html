@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="./vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="./styles/main.css" />
+  <link rel="stylesheet" href="./styles/auth.css" />
   <script>
     window.__PRESSURE_API_BASE__ = '/api';
     window.__PRESSURE_USE_MOCK__ = false;
@@ -18,12 +19,80 @@
   <noscript>
     <div class="noscript">JavaScript is required to render the dashboard preview.</div>
   </noscript>
-  <div class="page">
+
+  <!-- Authentication Screen -->
+  <div id="authScreen" class="auth-container">
+    <div class="auth-card">
+      <div class="auth-header">
+        <h1>Pressure Logger</h1>
+        <p id="authScreenMode">Sign in to your account</p>
+      </div>
+
+      <div id="authAlert" class="auth-alert" style="display: none;"></div>
+
+      <form id="authForm" class="auth-form" onsubmit="handleAuthSubmit(event)">
+        <!-- Login/Register fields -->
+        <div class="form-group">
+          <label for="authUsername">Username</label>
+          <input 
+            type="text" 
+            id="authUsername" 
+            name="username" 
+            placeholder="Enter your username"
+            required 
+            minlength="3"
+          />
+          <span class="form-error" id="usernameError"></span>
+        </div>
+
+        <div class="form-group" id="emailGroup" style="display: none;">
+          <label for="authEmail">Email</label>
+          <input 
+            type="email" 
+            id="authEmail" 
+            name="email" 
+            placeholder="Enter your email"
+            minlength="5"
+          />
+          <span class="form-error" id="emailError"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="authPassword">Password</label>
+          <input 
+            type="password" 
+            id="authPassword" 
+            name="password" 
+            placeholder="Enter your password"
+            required 
+            minlength="6"
+          />
+          <span class="form-error" id="passwordError"></span>
+        </div>
+
+        <button type="submit" class="auth-button" id="authSubmitBtn">Sign in</button>
+      </form>
+
+      <div class="auth-toggle">
+        <p>
+          <span id="authTogglePrompt">Don't have an account?</span>
+          <a onclick="toggleAuthMode()">
+            <span id="authToggleLink">Sign up</span>
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Dashboard -->
+  <div id="dashboardScreen" class="page" style="display: none;">
     <div class="toolbar" aria-label="Dashboard controls">
       <div class="toolbar__status" id="connectionStatus" role="status">Bootstrapping mock data stream</div>
       <div class="toolbar__actions">
         <button class="chip chip--primary" data-action="refresh" type="button">Manual refresh</button>
         <span class="chip chip--ghost" id="lastUpdated">Last sync pending</span>
+        <span class="chip chip--ghost" id="userInfo"></span>
+        <button class="chip chip--ghost" onclick="logout()">Logout</button>
       </div>
     </div>
 
@@ -89,6 +158,7 @@
   </div>
 
   <script src="./vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="./scripts/auth.js"></script>
   <script type="module" src="./scripts/app.js"></script>
 </body>
 </html>

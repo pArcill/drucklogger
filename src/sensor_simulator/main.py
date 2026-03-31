@@ -12,6 +12,7 @@ import paho.mqtt.client as mqtt
 import sys
 import traceback
 
+
 """
 A sensor simulator sending simulated sensor data
 
@@ -119,26 +120,43 @@ class SensorStatus:
 		battery(float): The current battery levels with 1.0 = 100%
 		latitude(float): The latitude of the sensor's coordinates at time of transmission
 		longitude(float): The longitude of the sensor's coordinates at time of transmission
+		altitude(float): The altitude of the sensor in meters above sea level
+		display_clearance(str): Clearance level for viewing sensor on map
+		readings_clearance(str): Clearance level for viewing sensor readings
 		timestamp(str): Time of transmission
 	"""
 	mac: str
 	battery: float
 	latitude: float
 	longitude: float
+	altitude: float
+	display_clearance: str
+	readings_clearance: str
 	timestamp: str
 
 @dataclass
 class MeasurementData:
-	""""""
+	"""
+	Class to convey measurement data as sent by a SensorSimulator object
+
+	Attributes:
+		mac(str): The physical address of the sensor
+		pressure(float): The measured pressure value in hPa
+		display_clearance(str): Clearance level for viewing sensor on map
+		readings_clearance(str): Clearance level for viewing sensor readings
+		timestamp(str): Time of measurement
+	"""
 	mac: str
 	pressure: float
+	display_clearance: str
+	readings_clearance: str
 	timestamp: str
 
 class SensorSimulator:
 	"""
 	Class for simulating a sensor with the ability to publish its status or readings
 	"""
-	def __init__(self, mac: str, mqtt_broker: str, mqtt_port: int):
+	def __init__(self, mac: str, mqtt_broker: str, mqtt_port: int, display_clearance = "regular", readings_clearance = "regular"):
 		self.mac = mac
 		self.mqtt_broker = mqtt_broker
 		self.mqtt_port = mqtt_port
@@ -156,6 +174,9 @@ class SensorSimulator:
 		self.battery = random.uniform(0.2, 1.0)
 		self.latitude = 47.8095 + random.uniform(-0.01, 0.01)
 		self.longitude = 13.0550 + random.uniform(-0.01, 0.01)
+		self.altitude = random.uniform(200.0, 1500.0)  # Meters above sea level
+		self.display_clearance: str = display_clearance  # Who can see the sensor on map
+		self.readings_clearance: str = readings_clearance  # Who can view readings
 
 		self.expected_range = [980.0, 1050.0]
 
@@ -204,10 +225,13 @@ class SensorSimulator:
 			battery=self.battery,
 			latitude=self.latitude,
 			longitude=self.longitude,
+			altitude=self.altitude,
+			display_clearance=self.display_clearance,
+			readings_clearance=self.readings_clearance,
 			timestamp=datetime.now().isoformat()
 		)
 		self.client.publish("sensors/status", json.dumps(asdict(status)))
-		logger.info(f"Sensor {self.mac} sent status: battery={status.battery:.2f}, location=({status.latitude:.4f}, {status.longitude:.4f})")
+		logger.info(f"Sensor {self.mac} sent status: battery={status.battery:.2f}, location=({status.latitude:.4f}, {status.longitude:.4f}), altitude={status.altitude:.1f}m")
 		# battery usage may happen on either status or measurement send
 		self._maybe_decrease_battery()
 			
@@ -228,6 +252,8 @@ class SensorSimulator:
 		measurement = MeasurementData(
 			mac=self.mac,
 			pressure=pressure,
+			display_clearance=self.display_clearance,
+			readings_clearance=self.readings_clearance,
 			timestamp=datetime.now().isoformat()
 		)
 		# include out-of-range indicator in the published message
@@ -272,7 +298,7 @@ def main():
 	sensors: list[SensorSimulator] = [
 		SensorSimulator("AA:BB:CC:00:11:22", mqtt_broker, mqtt_port),
 		SensorSimulator("AA:BB:CC:00:11:23", mqtt_broker, mqtt_port),
-		SensorSimulator("AA:BB:CC:00:11:24", mqtt_broker, mqtt_port),
+		SensorSimulator("AA:BB:CC:00:11:24", mqtt_broker, mqtt_port, display_clearance="elevated", readings_clearance="full_clearance"),
 	]
 	
 	logger.info(f"Started {len(sensors)} sensor simulators")

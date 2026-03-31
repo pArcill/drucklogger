@@ -5,9 +5,9 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Header
 from sqlalchemy import func
 from sqlmodel import Session, select
 
@@ -16,7 +16,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from postgres_database.database import create_db_and_tables, engine, get_session
 from fastapi_backend.mqtt_handler import MQTTHandler
-from fastapi_backend.models import Measurement, Sensor
+from fastapi_backend.models import Measurement, Sensor, User, RegisterRequest, LoginRequest
+from fastapi_backend.auth import (
+    authenticate_user, register_user, create_access_token, 
+    get_user_from_token, ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from fastapi_backend.role_config import can_access_readings, can_view_sensor
 
 # Configure logging
 logging.basicConfig(
@@ -56,6 +61,24 @@ class ConnectionManager:
                 logger.error(f"Error sending WebSocket message: {e}")
 
 manager = ConnectionManager()
+
+
+def extract_token_from_header(authorization: str = Header(None)) -> str:
+    """Extract Bearer token from Authorization header"""
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing authorization header"
+        )
+    
+    parts = authorization.split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid authorization header"
+        )
+    
+    return parts[1]
 
 
 @asynccontextmanager
@@ -115,23 +138,130 @@ def health_check():
     }
 
 
-@app.get("/api/measurements")
-def get_latest_measurements(limit: int = 100, session: Session = Depends(get_session)):
-    """Get latest measurements from all sensors"""
+# ============================================================================
+# Authentication Endpoints
+# ============================================================================
+
+@app.post("/api/auth/register")
+def register(
+    request: RegisterRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Register a new user account
+    """
+    # Simple validation
+    if not request.username or len(request.username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if not request.email or "@" not in request.email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    if not request.password or len(request.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
     try:
+        user = register_user(session, request.username, request.email, request.password)
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "message": "User registered successfully"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error registering user: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error registering user")
+
+
+@app.post("/api/auth/login")
+def login(
+    request: LoginRequest,
+    session: Session = Depends(get_session)
+):
+    """
+    Login with username and password
+    Returns JWT access token
+    """
+    if not request.username or not request.password:
+        raise HTTPException(status_code=400, detail="Username and password required")
+    
+    try:
+        user = authenticate_user(session, request.username, request.password)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={"sub": user.username},
+            expires_delta=access_token_expires
+        )
+        
+        return {
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during login: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error during login")
+
+
+@app.get("/api/auth/me")
+def get_current_user_info(
+    authorization: str = Header(None),
+    session: Session = Depends(get_session)
+):
+    """Get current user info (requires authentication)"""
+    token = extract_token_from_header(authorization)
+    user = get_user_from_token(token, session)
+    
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role
+    }
+
+
+@app.get("/api/measurements")
+def get_latest_measurements(
+    limit: int = 100,
+    authorization: str = Header(None),
+    session: Session = Depends(get_session)
+):
+    """Get latest measurements from sensors user can access"""
+    try:
+        # Get current user
+        token = extract_token_from_header(authorization)
+        current_user = get_user_from_token(token, session)
+        
         statement = select(Measurement).order_by(Measurement.created_at.desc()).limit(limit)
         measurements = session.exec(statement).all()
-        return [
-            {
-                "id": m.id,
-                "sensor_id": m.sensor_id,
-                "sensor_name": m.sensor.name if m.sensor else "Unknown",
-                "mac": m.sensor.mac_address if m.sensor else None,
-                "pressure": m.pressure,
-                "timestamp": isoformat_utc(m.created_at)
-            }
-            for m in measurements
-        ]
+        
+        filtered_measurements = []
+        for m in measurements:
+            # Only include measurements from sensors the user can read
+            if can_access_readings(current_user.role, m.sensor.readings_clearance):
+                filtered_measurements.append({
+                    "id": m.id,
+                    "sensor_id": m.sensor_id,
+                    "sensor_name": m.sensor.name if m.sensor else "Unknown",
+                    "mac": m.sensor.mac_address if m.sensor else None,
+                    "pressure": m.pressure,
+                    "timestamp": isoformat_utc(m.created_at)
+                })
+        
+        return filtered_measurements
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error retrieving measurements: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -178,9 +308,16 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @app.get("/api/sensors")
-def get_sensors(session: Session = Depends(get_session)):
-    """Return all registered sensors with last-seen metadata"""
+def get_sensors(
+    authorization: str = Header(None),
+    session: Session = Depends(get_session)
+):
+    """Return sensors filtered by user's display-clearance access level"""
     try:
+        # Get current user
+        token = extract_token_from_header(authorization)
+        current_user = get_user_from_token(token, session)
+        
         latest_measurements = (
             select(
                 Measurement.sensor_id,
@@ -199,18 +336,30 @@ def get_sensors(session: Session = Depends(get_session)):
         rows = session.exec(statement).all()
         sensors = []
         for sensor, last_seen in rows:
-            sensors.append({
+            # Check if user can see this sensor on the map
+            if not can_view_sensor(current_user.role, sensor.display_clearance):
+                continue
+            
+            # Check if user can read this sensor's measurements
+            can_read = can_access_readings(current_user.role, sensor.readings_clearance)
+            
+            sensor_data = {
                 "id": sensor.id,
                 "mac": sensor.mac_address,
                 "name": sensor.name,
                 "location": f"{sensor.latitude:.4f}, {sensor.longitude:.4f}",
                 "latitude": sensor.latitude,
                 "longitude": sensor.longitude,
-                "battery": sensor.battery_level,
+                "altitude": sensor.altitude,
+                "battery": sensor.battery_level if can_read else None,
                 "last_seen": isoformat_utc(last_seen) if last_seen else None,
-            })
+                "can_read": can_read
+            }
+            sensors.append(sensor_data)
 
         return sensors
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error retrieving sensors: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

@@ -6,6 +6,7 @@ import {
   mergeMeasurements,
 } from './analytics.js';
 import { createMockApi } from './mockApi.js';
+import { getAuthHeader, isAuthenticated, initAuth, logout, toggleAuthMode, handleAuthSubmit } from './auth.js';
 
 const PRESSURE_SAFE_RANGE = { min: 98, max: 105 }; // hPa boundaries for a healthy reading
 const BATTERY_LOW_THRESHOLD = 0.25; // 25%
@@ -54,8 +55,19 @@ function createHttpApi(baseUrl) {
   };
 
   const fetchJson = async (path) => {
-    const response = await fetch(buildPath(path));
+    const headers = {};
+    const authHeader = getAuthHeader();
+    if (authHeader) {
+      headers['Authorization'] = authHeader;
+    }
+    
+    const response = await fetch(buildPath(path), { headers });
     if (!response.ok) {
+      if (response.status === 401) {
+        // Token expired or invalid, logout
+        window.logout();
+        throw new Error('Authentication expired');
+      }
       throw new Error(`Request failed: ${response.status}`);
     }
     return response.json();
@@ -97,6 +109,14 @@ function createHttpApi(baseUrl) {
 }
 
 async function bootstrap() {
+  // Initialize authentication UI
+  initAuth();
+  
+  // Check if user is authenticated
+  if (!isAuthenticated()) {
+    return;
+  }
+  
   bindInteractions();
   initMap();
   await hydrate();
@@ -258,7 +278,7 @@ function deriveSensorStatus(sensor) {
 function renderSensors() {
   const container = selectors.sensorGrid;
   if (!state.sensors.length) {
-    container.innerHTML = '<div class="empty-state">No sensors defined yet.</div>';
+    container.innerHTML = '<div class="empty-state">No sensors available with your access level.</div>';
     return;
   }
 
@@ -282,10 +302,16 @@ function renderSensors() {
   container.innerHTML = '';
   filtered.forEach((sensor) => {
     const status = deriveSensorStatus(sensor);
-    const pressureDisplay = sensor.latest_measurement ? formatPressure(sensor.latest_measurement.pressure) : '--';
+    const canRead = sensor.can_read !== false; // Default to true if not specified (backwards compatibility)
+    const pressureDisplay = canRead && sensor.latest_measurement ? formatPressure(sensor.latest_measurement.pressure) : '---';
+    const batteryDisplay = canRead ? formatBattery(sensor.battery) : '---';
+    const altitudeDisplay = canRead && sensor.altitude ? `${Math.round(sensor.altitude)} m` : '---';
     const detailLine = status.flags.length ? status.flags.map((flag) => flag.label).join(' • ') : 'Operating nominally';
     const card = document.createElement('article');
     card.className = `sensor-card sensor-card--${status.level}`;
+    
+    const readabilityNotice = !canRead ? '<div style="font-size: 0.8rem; color: var(--color-muted); margin-top: 4px;">⚠ Insufficient clearance for readings</div>' : '';
+    
     card.innerHTML = `
       <div class="sensor-card__header">
         <div>
@@ -300,20 +326,21 @@ function renderSensors() {
         ${status.message}
       </div>
       <div class="sensor-card__meta">
-        <span>Battery ${formatBattery(sensor.battery)}</span>
+        <span>Battery ${batteryDisplay}</span>
         <span>${pressureDisplay}</span>
       </div>
       <div class="battery-bar" aria-hidden="true">
-        <div class="battery-bar__value" style="width:${Math.round((sensor.battery || 0) * 100)}%"></div>
+        <div class="battery-bar__value" style="width:${canRead ? Math.round((sensor.battery || 0) * 100) : 0}%"></div>
       </div>
       <div class="sensor-card__meta">
         <span>MAC ${sensor.mac}</span>
-        <span>${sensor.last_seen ? relativeTime(sensor.last_seen) : 'n/a'}</span>
+        <span>Altitude ${altitudeDisplay}</span>
       </div>
       <div class="sensor-card__meta sensor-card__meta--secondary">
         <span>${detailLine}</span>
-        <span>${sensor.latest_measurement ? new Date(sensor.latest_measurement.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'No data yet'}</span>
+        <span>${sensor.last_seen ? relativeTime(sensor.last_seen) : 'n/a'}</span>
       </div>
+      ${readabilityNotice}
     `;
     container.appendChild(card);
   });
@@ -349,7 +376,19 @@ function renderMap() {
       return;
     }
     const status = deriveSensorStatus(sensor);
+    const canRead = sensor.can_read !== false;
     coordinates.push([sensor.latitude, sensor.longitude]);
+    
+    const pressureInfo = canRead && sensor.latest_measurement 
+      ? `<br />${formatPressure(sensor.latest_measurement.pressure)}`
+      : '<br /><em style="color: #666;">Readings unavailable</em>';
+    const batteryInfo = canRead 
+      ? `<br />Battery ${formatBattery(sensor.battery)}`
+      : '';
+    const altitudeInfo = canRead && sensor.altitude 
+      ? `<br />Altitude ${Math.round(sensor.altitude || 0)} m`
+      : '';
+    
     const marker = L.circleMarker([sensor.latitude, sensor.longitude], {
       radius: 10,
       color: status.level === 'critical' ? '#b91c1c' : status.level === 'warning' ? '#ff9f1c' : '#136f63',
@@ -357,12 +396,8 @@ function renderMap() {
       fillOpacity: sensor.is_online ? 0.85 : 0.4,
     });
     marker.bindPopup(
-      `<strong>${sensor.name || sensor.mac}</strong><br />${formatPressure(sensor.latest_measurement?.pressure)}<br />Battery ${formatBattery(sensor.battery)}<br />${sensor.location || ''}`,
+      `<strong>${sensor.name || sensor.mac}</strong>${pressureInfo}${batteryInfo}${altitudeInfo}<br />${sensor.location || ''}`,
     );
-    // marker.bindTooltip(
-    //   `${status.message} · ${formatPressure(sensor.latest_measurement?.pressure)} · Battery ${formatBattery(sensor.battery)}`,
-    //   { direction: 'top', offset: [0, -8], opacity: 0.9, sticky: true },
-    // );
     marker.on('mouseover', () => marker.openPopup());
     marker.on('mouseout', () => marker.closePopup());
     marker.addTo(state.markerLayer);
@@ -397,4 +432,13 @@ function relativeTime(value) {
   return `${hours} h ago`;
 }
 
+// Make auth functions globally available for inline event handlers
+window.logout = logout;
+window.toggleAuthMode = toggleAuthMode;
+window.handleAuthSubmit = handleAuthSubmit;
+
+// Export functions that analytics.js might need
+window.decorateSensorsWithMeasurements = decorateSensorsWithMeasurements;
+
 bootstrap();
+
