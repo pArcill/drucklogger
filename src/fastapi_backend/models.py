@@ -27,6 +27,7 @@ class Sensor(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     mac_address: str = Field(unique=True, index=True, max_length=17)
     name: str = Field(max_length=100)
+    sensor_type: str = Field(default="physical", max_length=20)  # "physical" or "simulator"
     latitude: float
     longitude: float
     altitude: float = Field(default=0.0)  # Meters above sea level
@@ -69,3 +70,18 @@ class LoginRequest(SQLModel):
     """Request model for user login"""
     username: str
     password: str
+
+
+class CreateSensorRequest(SQLModel):
+    """Request model for creating a physical sensor"""
+    sensor_type: str  # "physical" or "simulator"
+    name: str
+    mac_address: str
+    latitude: float
+    longitude: float
+    altitude: float = 0.0
+    battery_level: float = 1.0  # Default to 100%
+    pressure_range_min: float = 980.0
+    pressure_range_max: float = 1050.0
+    display_clearance: str = "regular"
+    readings_clearance: str = "regular"

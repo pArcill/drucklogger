@@ -1,6 +1,5 @@
 from dataclasses import dataclass, asdict
 from datetime import datetime
-
 import json
 import logging
 import logging.handlers
@@ -11,6 +10,26 @@ import math
 import paho.mqtt.client as mqtt
 import sys
 import traceback
+
+# Try to import database modules, but don't fail if not available
+# (sensor_simulator may run standalone without database access)
+DATABASE_AVAILABLE = False
+engine = None
+Session = None
+Sensor = None
+
+try:
+	sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+	from postgres_database.database import engine, create_db_and_tables
+	from fastapi_backend.models import Sensor
+	from sqlmodel import Session, select
+	DATABASE_AVAILABLE = True
+except (ImportError, ModuleNotFoundError) as e:
+	import traceback
+	# Print to stderr so it appears in logs
+	print(f"WARNING: Database modules not available: {e}", file=sys.stderr)
+	print(traceback.format_exc(), file=sys.stderr)
+
 
 
 """
@@ -36,6 +55,12 @@ logging.basicConfig(
 	]
 )
 logger = logging.getLogger(__name__)
+
+# Log database availability
+if DATABASE_AVAILABLE:
+	logger.info("Database modules available - will load simulators from database")
+else:
+	logger.warning("Database modules not available - will use hardcoded sensors only")
 
 
 # crash logger
@@ -289,51 +314,291 @@ class SensorSimulator:
 			logger.debug(f"Battery drain triggered for sensor {self.mac}: {old:.3f} -> {self.battery:.3f}")
 			self.messages_sent_since_last_battery_decrease = 0
 
+def load_simulators_from_db(mqtt_broker, mqtt_port, running_simulators):
+	"""Load simulator sensors from the database"""
+	try:
+		with Session(engine) as session:
+			# Query for all sensors with type "simulator"
+			simulators = session.exec(select(Sensor).where(Sensor.sensor_type == "simulator")).all()
+			loaded_count = 0
+			
+			for sensor in simulators:
+				if sensor.mac_address in running_simulators:
+					continue
+				
+				try:
+					simulator = SensorSimulator(
+						mac=sensor.mac_address,
+						mqtt_broker=mqtt_broker,
+						mqtt_port=mqtt_port,
+						display_clearance=sensor.display_clearance,
+						readings_clearance=sensor.readings_clearance
+					)
+					simulator.latitude = sensor.latitude
+					simulator.longitude = sensor.longitude
+					simulator.altitude = sensor.altitude
+					simulator.battery = sensor.battery_level
+					
+					running_simulators[sensor.mac_address] = simulator
+					logger.info(f"Loaded simulator {sensor.mac_address} from database")
+					loaded_count += 1
+				except Exception as e:
+					logger.error(f"Failed to create simulator for {sensor.mac_address}: {e}")
+			
+			return loaded_count
+	except Exception as e:
+		logger.error(f"Error loading simulators from database: {e}")
+		return 0
+
+def load_simulators_from_config(mqtt_broker, mqtt_port, running_simulators):
+	"""Load simulator configurations from JSON file"""
+	config_path = "/app/simulator_config.json"
+	
+	# Try alternate paths if the standard one doesn't exist
+	if not os.path.exists(config_path):
+		config_path = "simulator_config.json"
+	if not os.path.exists(config_path):
+		config_path = "../simulator_config.json"
+	if not os.path.exists(config_path):
+		logger.warning(f"No simulator config file found at {config_path}")
+		return 0
+	
+	try:
+		with open(config_path, 'r') as f:
+			config_data = json.load(f)
+		
+		simulators_config = config_data.get("simulators", [])
+		loaded_count = 0
+		
+		for sim_config in simulators_config:
+			mac = sim_config.get("mac")
+			if not mac or mac in running_simulators:
+				continue
+			
+			try:
+				simulator = SensorSimulator(
+					mac=mac,
+					mqtt_broker=mqtt_broker,
+					mqtt_port=mqtt_port,
+					display_clearance=sim_config.get("display_clearance", "regular"),
+					readings_clearance=sim_config.get("readings_clearance", "regular")
+				)
+				simulator.latitude = sim_config.get("latitude", 47.0)
+				simulator.longitude = sim_config.get("longitude", 13.0)
+				simulator.altitude = sim_config.get("altitude", 0.0)
+				simulator.battery = sim_config.get("battery_level", 1.0)
+				simulator.expected_range = sim_config.get("expected_range", [980.0, 1050.0])
+				
+				running_simulators[mac] = simulator
+				logger.info(f"Loaded simulator {mac} from config file")
+				loaded_count += 1
+			except Exception as e:
+				logger.error(f"Failed to create simulator for {mac}: {e}")
+		
+		return loaded_count
+	except Exception as e:
+		logger.error(f"Error loading simulator config: {e}")
+		return 0
+
+def sync_config_simulators_to_database(running_simulators):
+	"""Sync running simulators from config file to database so they appear in the UI"""
+	if not DATABASE_AVAILABLE:
+		return 0
+	
+	try:
+		with Session(engine) as session:
+			synced_count = 0
+			
+			for mac, simulator in running_simulators.items():
+				# Check if sensor exists in database
+				existing = session.exec(
+					select(Sensor).where(Sensor.mac_address == mac)
+				).first()
+				
+				if not existing:
+					# Create sensor record for this simulator
+					sensor = Sensor(
+						mac_address=mac,
+						name=f"Simulator {mac}",
+						sensor_type="simulator",
+						latitude=simulator.latitude,
+						longitude=simulator.longitude,
+						altitude=simulator.altitude,
+						battery_level=simulator.battery,
+						display_clearance=simulator.display_clearance,
+						readings_clearance=simulator.readings_clearance
+					)
+					session.add(sensor)
+					synced_count += 1
+					logger.info(f"Synced simulator {mac} to database (was in config file)")
+			
+			if synced_count > 0:
+				session.commit()
+				logger.info(f"Synced {synced_count} simulator(s) from config to database")
+			
+			return synced_count
+	except Exception as e:
+		logger.error(f"Error syncing config simulators to database: {e}")
+		return 0
+
+def remove_deleted_simulators(running_simulators):
+	"""Remove simulators for sensors that have been deleted from the database"""
+	if not DATABASE_AVAILABLE:
+		return 0
+	
+	try:
+		with Session(engine) as session:
+			# Get all simulator sensors currently in database
+			active_simulators = session.exec(select(Sensor).where(Sensor.sensor_type == "simulator")).all()
+			active_macs = {sensor.mac_address for sensor in active_simulators}
+			
+			# Find simulators that are no longer in database
+			running_macs = set(running_simulators.keys())
+			deleted_macs = running_macs - active_macs
+			
+			removed_count = 0
+			for mac in deleted_macs:
+				try:
+					simulator = running_simulators[mac]
+					simulator.disconnect()
+					del running_simulators[mac]
+					logger.info(f"Removed simulator {mac} (sensor was deleted from database)")
+					removed_count += 1
+				except Exception as e:
+					logger.error(f"Error removing simulator {mac}: {e}")
+			
+			return removed_count
+	except Exception as e:
+		logger.error(f"Error checking for deleted simulators: {e}")
+		return 0
+
 def main():
-	# Get configuration from environment
+	"""
+	Main sensor simulator loop.
+	Loads simulator sensors from the config file or database and runs them continuously.
+	Falls back to hardcoded sensors if no sensors are found.
+	"""
+	# Initialize database if available
+	if DATABASE_AVAILABLE:
+		try:
+			create_db_and_tables()
+			logger.info("Database initialized")
+		except Exception as e:
+			logger.warning(f"Could not initialize database: {e}. Will use config file or hardcoded sensors.")
+	
 	mqtt_broker = os.getenv("MQTT_BROKER", "mqtt_broker")
 	mqtt_port = int(os.getenv("MQTT_PORT", "1883"))
 	
-	# Create three sensors with different MAC addresses
-	sensors: list[SensorSimulator] = [
-		SensorSimulator("AA:BB:CC:00:11:22", mqtt_broker, mqtt_port),
-		SensorSimulator("AA:BB:CC:00:11:23", mqtt_broker, mqtt_port),
-		SensorSimulator("AA:BB:CC:00:11:24", mqtt_broker, mqtt_port, display_clearance="elevated", readings_clearance="full_clearance"),
-	]
+	# Dictionary to track running simulator instances by MAC address
+	running_simulators: dict[str, SensorSimulator] = {}
+	last_db_check = 0
+	db_check_interval = 5  # Check for new simulators every 5 seconds
 	
-	logger.info(f"Started {len(sensors)} sensor simulators")
+	# Try to load simulators from config file first
+	logger.info("Attempting to load simulators from config file...")
+	loaded = load_simulators_from_config(mqtt_broker, mqtt_port, running_simulators)
+	
+	# If database is available and no config file simulators, try database
+	if loaded == 0 and DATABASE_AVAILABLE:
+		logger.info("No simulators in config file. Attempting to load from database...")
+		loaded = load_simulators_from_db(mqtt_broker, mqtt_port, running_simulators)
+	
+	# Log the result
+	if loaded == 0:
+		logger.warning("No simulators found in config file or database. Running without simulators.")
+		logger.warning("Please add simulators via the API or provide a simulator_config.json file.")
+	else:
+		logger.info(f"Started {len(running_simulators)} simulator(s) from config file or database")
+	
+	# Sync config file simulators to database so they appear in UI
+	if DATABASE_AVAILABLE and running_simulators:
+		synced = sync_config_simulators_to_database(running_simulators)
+		if synced > 0:
+			logger.info(f"Synced {synced} simulator(s) to database on startup")
 	
 	# Send initial status for all sensors
 	logger.info("Sending initial status updates...")
-	for sensor in sensors:
-		sensor.send_status()
+	for simulator in running_simulators.values():
+		try:
+			simulator.send_status()
+		except Exception as e:
+			logger.error(f"Error sending initial status for {simulator.mac}: {e}")
 	
 	try:
 		measurement_counter = 0
 		while True:
-			# Send measurements every second
-			for sensor in sensors:
-				sensor.send_measurement()
+			# Periodically check for new/deleted simulators (every 5 seconds)
+			now = time.time()
+			if now - last_db_check >= db_check_interval:
+				# Check for and remove deleted simulators first
+				if DATABASE_AVAILABLE:
+					removed = remove_deleted_simulators(running_simulators)
+					if removed > 0:
+						logger.info(f"Removed {removed} simulator(s) that were deleted from database")
+				
+				# Load new simulators from both config file and database
+				newly_loaded_macs = []
+				
+				# Always check config file for new entries
+				initial_count = len(running_simulators)
+				load_simulators_from_config(mqtt_broker, mqtt_port, running_simulators)
+				config_newly_loaded = len(running_simulators) - initial_count
+				if config_newly_loaded > 0:
+					logger.info(f"Loaded {config_newly_loaded} new simulator(s) from config file")
+					newly_loaded_macs.extend(list(running_simulators.keys())[-config_newly_loaded:])
+					# Sync newly loaded config simulators to database
+					synced = sync_config_simulators_to_database(running_simulators)
+					if synced > 0:
+						logger.info(f"Synced {synced} new simulator(s) to database")
+				
+				# Also check database if available
+				if DATABASE_AVAILABLE:
+					initial_count = len(running_simulators)
+					load_simulators_from_db(mqtt_broker, mqtt_port, running_simulators)
+					db_newly_loaded = len(running_simulators) - initial_count
+					if db_newly_loaded > 0:
+						logger.info(f"Loaded {db_newly_loaded} new simulator(s) from database")
+						newly_loaded_macs.extend(list(running_simulators.keys())[-db_newly_loaded:])
+				
+				# Send initial status for newly loaded sensors
+				for mac in newly_loaded_macs:
+					try:
+						if mac in running_simulators:
+							running_simulators[mac].send_status()
+					except Exception as e:
+						logger.error(f"Error sending status for new simulator {mac}: {e}")
+				last_db_check = now
+			
+			# Send measurements for all running simulators
+			for simulator in running_simulators.values():
+				try:
+					simulator.send_measurement()
+				except Exception as e:
+					logger.error(f"Error sending measurement for {simulator.mac}: {e}")
+			
 			measurement_counter += 1
 			
 			# Send status every 10 seconds
-			# This may be a bit unrealistic, but I thought a shorter time might be better for
-			# testing and observation purposes.
 			if measurement_counter % 10 == 0:
-				for sensor in sensors:
-					sensor.send_status()
-				logger.info("Status update sent for all sensors")
-			
+				for simulator in running_simulators.values():
+					try:
+						simulator.send_status()
+					except Exception as e:
+						logger.error(f"Error sending status for {simulator.mac}: {e}")
+				logger.debug(f"Status update sent for {len(running_simulators)} simulator(s)")
 			
 			time.sleep(1)
 	
 	except KeyboardInterrupt:
 		logger.info("Shutting down sensor simulators...")
 	except Exception as e:
-		logger.error(f"Error in sensor simulator: {e}", exc_info=True)
+		logger.error(f"Error in sensor simulator main loop: {e}", exc_info=True)
 	finally:
-		for sensor in sensors:
-			sensor.disconnect()
+		for simulator in running_simulators.values():
+			try:
+				simulator.disconnect()
+			except Exception as e:
+				logger.error(f"Error disconnecting simulator {simulator.mac}: {e}")
 		logger.info("All sensors disconnected")
 
 if __name__ == "__main__":

@@ -16,12 +16,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from postgres_database.database import create_db_and_tables, engine, get_session
 from fastapi_backend.mqtt_handler import MQTTHandler
-from fastapi_backend.models import Measurement, Sensor, User, RegisterRequest, LoginRequest
+from fastapi_backend.models import Measurement, Sensor, User, RegisterRequest, LoginRequest, CreateSensorRequest
 from fastapi_backend.auth import (
     authenticate_user, register_user, create_access_token, 
     get_user_from_token, ACCESS_TOKEN_EXPIRE_MINUTES
 )
-from fastapi_backend.role_config import can_access_readings, can_view_sensor
+from fastapi_backend.role_config import can_access_readings, can_view_sensor, ROLE_HIERARCHY
 
 # Configure logging
 logging.basicConfig(
@@ -138,6 +138,14 @@ def health_check():
     }
 
 
+@app.get("/api/config/roles")
+def get_roles():
+    """Get available role hierarchy for access control"""
+    return {
+        "roles": ROLE_HIERARCHY
+    }
+
+
 # ============================================================================
 # Authentication Endpoints
 # ============================================================================
@@ -220,15 +228,23 @@ def get_current_user_info(
     session: Session = Depends(get_session)
 ):
     """Get current user info (requires authentication)"""
-    token = extract_token_from_header(authorization)
-    user = get_user_from_token(token, session)
-    
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "role": user.role
-    }
+    try:
+        token = extract_token_from_header(authorization)
+        user = get_user_from_token(token, session)
+        
+        logger.debug(f"Current user info requested: {user.username}")
+        
+        return {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error getting user info")
 
 
 @app.get("/api/measurements")
@@ -242,6 +258,8 @@ def get_latest_measurements(
         # Get current user
         token = extract_token_from_header(authorization)
         current_user = get_user_from_token(token, session)
+        
+        logger.debug(f"User '{current_user.username}' (role={current_user.role}) requested {limit} latest measurements")
         
         statement = select(Measurement).order_by(Measurement.created_at.desc()).limit(limit)
         measurements = session.exec(statement).all()
@@ -259,6 +277,7 @@ def get_latest_measurements(
                     "timestamp": isoformat_utc(m.created_at)
                 })
         
+        logger.info(f"User '{current_user.username}' accessed {len(filtered_measurements)} measurements (role={current_user.role}, from {len(measurements)} total)")
         return filtered_measurements
     except HTTPException:
         raise
@@ -318,6 +337,8 @@ def get_sensors(
         token = extract_token_from_header(authorization)
         current_user = get_user_from_token(token, session)
         
+        logger.debug(f"User '{current_user.username}' (role={current_user.role}) requested sensor list")
+        
         latest_measurements = (
             select(
                 Measurement.sensor_id,
@@ -338,6 +359,7 @@ def get_sensors(
         for sensor, last_seen in rows:
             # Check if user can see this sensor on the map
             if not can_view_sensor(current_user.role, sensor.display_clearance):
+                logger.debug(f"User '{current_user.username}' cannot view sensor {sensor.mac_address} (display_clearance={sensor.display_clearance})")
                 continue
             
             # Check if user can read this sensor's measurements
@@ -357,9 +379,306 @@ def get_sensors(
             }
             sensors.append(sensor_data)
 
+        logger.info(f"User '{current_user.username}' can access {len(sensors)} sensors (role={current_user.role})")
         return sensors
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error retrieving sensors: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/sensors")
+def create_sensor(
+    request: CreateSensorRequest,
+    authorization: str = Header(None),
+    session: Session = Depends(get_session)
+):
+    """
+    Create a new sensor (either physical or simulator type)
+    
+    For physical sensors, creates a Sensor record in the database.
+    For simulator sensors, additionally creates a SensorSimulator instance.
+    """
+    try:
+        # Get current user (for audit purposes)
+        token = extract_token_from_header(authorization)
+        current_user = get_user_from_token(token, session)
+        
+        # Validate input
+        if request.sensor_type not in ["physical", "simulator"]:
+            raise HTTPException(status_code=400, detail="sensor_type must be 'physical' or 'simulator'")
+        
+        if not request.mac_address or len(request.mac_address) < 17:
+            raise HTTPException(status_code=400, detail="Invalid MAC address (must be in format AA:BB:CC:DD:EE:FF)")
+        
+        if not request.name or len(request.name) < 1:
+            raise HTTPException(status_code=400, detail="Sensor name is required")
+        
+        if not (-90 <= request.latitude <= 90):
+            raise HTTPException(status_code=400, detail="Latitude must be between -90 and 90")
+        
+        if not (-180 <= request.longitude <= 180):
+            raise HTTPException(status_code=400, detail="Longitude must be between -180 and 180")
+        
+        if not (0 <= request.battery_level <= 1.0):
+            raise HTTPException(status_code=400, detail="Battery level must be between 0 and 1.0")
+        
+        if request.pressure_range_min >= request.pressure_range_max:
+            raise HTTPException(status_code=400, detail="Pressure range min must be less than max")
+        
+        # Check if sensor with this MAC already exists
+        existing_sensor = session.exec(
+            select(Sensor).where(Sensor.mac_address == request.mac_address)
+        ).first()
+        
+        if existing_sensor:
+            raise HTTPException(status_code=400, detail=f"Sensor with MAC address {request.mac_address} already exists")
+        
+        # Create the sensor record in the database
+        sensor = Sensor(
+            mac_address=request.mac_address,
+            name=request.name,
+            sensor_type=request.sensor_type,
+            latitude=request.latitude,
+            longitude=request.longitude,
+            altitude=request.altitude,
+            battery_level=request.battery_level,
+            display_clearance=request.display_clearance,
+            readings_clearance=request.readings_clearance
+        )
+        
+        session.add(sensor)
+        session.commit()
+        session.refresh(sensor)
+        
+        logger.info(f"User {current_user.username} created a new {request.sensor_type} sensor: {request.name} ({request.mac_address})")
+        
+        # If it's a simulator, also write to the config file so sensor_simulator picks it up
+        if request.sensor_type == "simulator":
+            try:
+                import json
+                config_path = "/app/simulator_config.json"
+                
+                # Try alternate paths
+                if not os.path.exists(config_path):
+                    config_path = os.path.join(os.path.dirname(__file__), "..", "..", "simulator_config.json")
+                
+                # Load existing config or create new one
+                sim_config_data = {"simulators": []}
+                if os.path.exists(config_path):
+                    try:
+                        with open(config_path, 'r') as f:
+                            sim_config_data = json.load(f)
+                    except Exception as e:
+                        logger.warning(f"Could not read simulator config: {e}")
+                
+                # Add the new simulator
+                new_sim = {
+                    "mac": request.mac_address,
+                    "latitude": request.latitude,
+                    "longitude": request.longitude,
+                    "altitude": request.altitude,
+                    "battery_level": request.battery_level,
+                    "display_clearance": request.display_clearance,
+                    "readings_clearance": request.readings_clearance,
+                    "expected_range": [request.pressure_range_min, request.pressure_range_max]
+                }
+                sim_config_data["simulators"].append(new_sim)
+                
+                # Write back to config file
+                with open(config_path, 'w') as f:
+                    json.dump(sim_config_data, f, indent=2)
+                
+                logger.info(f"Added simulator {request.mac_address} to config file at {config_path}")
+            except Exception as e:
+                logger.warning(f"Failed to write simulator to config file: {e}. Simulator will still be in database.")
+        
+        return {
+            "id": sensor.id,
+            "mac": sensor.mac_address,
+            "name": sensor.name,
+            "sensor_type": request.sensor_type,
+            "latitude": sensor.latitude,
+            "longitude": sensor.longitude,
+            "altitude": sensor.altitude,
+            "battery_level": sensor.battery_level,
+            "display_clearance": sensor.display_clearance,
+            "readings_clearance": sensor.readings_clearance,
+            "pressure_range_min": request.pressure_range_min,
+            "pressure_range_max": request.pressure_range_max,
+            "message": f"{request.sensor_type.capitalize()} sensor created successfully. It will start sending data within 5 seconds."
+        }
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"Validation error creating sensor: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating sensor: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error creating sensor")
+
+
+@app.delete("/api/sensors/{sensor_id}")
+def delete_sensor(
+    sensor_id: int,
+    authorization: str = Header(None),
+    session: Session = Depends(get_session)
+):
+    """
+    Delete a sensor by ID
+    Also removes the sensor from the simulator config file if it's a simulator type
+    """
+    try:
+        # Get current user (for audit purposes)
+        token = extract_token_from_header(authorization)
+        current_user = get_user_from_token(token, session)
+        logger.debug(f"Delete request for sensor {sensor_id} by user {current_user.username}")
+        
+        # Find the sensor
+        try:
+            sensor = session.exec(
+                select(Sensor).where(Sensor.id == sensor_id)
+            ).first()
+        except Exception as e:
+            logger.error(f"Error querying sensor {sensor_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Error querying sensor")
+        
+        if not sensor:
+            logger.debug(f"Sensor {sensor_id} not found")
+            raise HTTPException(status_code=404, detail=f"Sensor with ID {sensor_id} not found")
+        
+        # Store values before deletion (sensor object will be detached after commit)
+        try:
+            sensor_name = sensor.name
+            sensor_mac = sensor.mac_address
+            sensor_type = sensor.sensor_type
+            logger.debug(f"Stored sensor details: name={sensor_name}, mac={sensor_mac}, type={sensor_type}")
+        except Exception as e:
+            logger.error(f"Error accessing sensor attributes: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Error accessing sensor details")
+        
+        logger.info(f"User {current_user.username} requested deletion of sensor: {sensor_name} ({sensor_mac})")
+        
+        # Delete all measurements for this sensor first (to satisfy foreign key constraints)
+        try:
+            measurements = session.exec(
+                select(Measurement).where(Measurement.sensor_id == sensor_id)
+            ).all()
+            logger.info(f"[DELETE] Found {len(measurements)} measurements to delete for sensor {sensor_id}")
+            for measurement in measurements:
+                session.delete(measurement)
+            
+            # Delete the sensor itself
+            logger.info(f"[DELETE] About to delete sensor {sensor_id} from session")
+            session.delete(sensor)
+            
+            # Single commit for both measurements and sensor
+            logger.info(f"[DELETE] About to COMMIT transaction for sensor {sensor_id}")
+            session.commit()
+            logger.info(f"[DELETE] COMMIT SUCCESSFUL for sensor {sensor_id} ({sensor_mac})")
+            
+            # Verify deletion by querying the database
+            try:
+                verify = session.exec(
+                    select(Sensor).where(Sensor.id == sensor_id)
+                ).first()
+                if verify:
+                    logger.error(f"[DELETE] ERROR: Sensor {sensor_id} still exists in database after delete!")
+                else:
+                    logger.info(f"[DELETE] VERIFIED: Sensor {sensor_id} successfully deleted from database")
+                
+                # Also verify measurements are gone
+                remaining_measurements = session.exec(
+                    select(Measurement).where(Measurement.sensor_id == sensor_id)
+                ).all()
+                if remaining_measurements:
+                    logger.error(f"[DELETE] ERROR: {len(remaining_measurements)} measurements still exist for sensor {sensor_id}!")
+                else:
+                    logger.info(f"[DELETE] VERIFIED: All measurements for sensor {sensor_id} deleted")
+            except Exception as e:
+                logger.warning(f"[DELETE] Could not verify deletion: {e}")
+            
+        except Exception as e:
+            logger.error(f"[DELETE] Error deleting sensor and measurements: {e}", exc_info=True)
+            try:
+                session.rollback()
+                logger.error(f"[DELETE] Rolled back transaction due to error")
+            except:
+                pass
+            raise HTTPException(status_code=500, detail=f"Error deleting sensor: {str(e)}")
+        
+        # If it's a simulator, also remove from config file
+        if sensor_type == "simulator":
+            logger.info(f"[CONFIG] Sensor {sensor_id} is simulator type, attempting config file removal for MAC {sensor_mac}")
+            try:
+                import json
+                config_path = "/app/simulator_config.json"
+                logger.debug(f"[CONFIG] Checking primary path: {config_path}")
+                
+                # Try alternate paths
+                if not os.path.exists(config_path):
+                    alt_path = os.path.join(os.path.dirname(__file__), "..", "..", "simulator_config.json")
+                    logger.info(f"[CONFIG] Primary path not found, trying alternate: {alt_path}")
+                    if os.path.exists(alt_path):
+                        config_path = alt_path
+                        logger.info(f"[CONFIG] Using alternate config path: {config_path}")
+                    else:
+                        logger.warning(f"[CONFIG] Alternate path also not found")
+                
+                if os.path.exists(config_path):
+                    logger.info(f"[CONFIG] Config file found, reading from {config_path}")
+                    try:
+                        with open(config_path, 'r') as f:
+                            sim_config_data = json.load(f)
+                        logger.debug(f"[CONFIG] Successfully loaded JSON, found {len(sim_config_data.get('simulators', []))} simulators")
+                        
+                        # Remove the simulator with matching MAC
+                        if "simulators" in sim_config_data:
+                            original_count = len(sim_config_data["simulators"])
+                            original_macs = [s.get('mac') for s in sim_config_data['simulators']]
+                            logger.info(f"[CONFIG] Current simulators in config: {original_macs}")
+                            
+                            sim_config_data["simulators"] = [
+                                s for s in sim_config_data["simulators"] 
+                                if s.get("mac") != sensor_mac
+                            ]
+                            removed = original_count - len(sim_config_data["simulators"])
+                            new_macs = [s.get('mac') for s in sim_config_data['simulators']]
+                            
+                            logger.info(f"[CONFIG] Removed {removed} simulator(s) with MAC {sensor_mac}")
+                            logger.info(f"[CONFIG] Simulators after removal: {new_macs}")
+                            
+                            # Write back to config file
+                            with open(config_path, 'w') as f:
+                                json.dump(sim_config_data, f, indent=2)
+                            
+                            logger.info(f"[CONFIG] Successfully wrote updated config to {config_path}")
+                        else:
+                            logger.error(f"[CONFIG] ERROR: Config file has no 'simulators' key!")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"[CONFIG] ERROR: Invalid JSON in simulator config: {e}")
+                    except Exception as e:
+                        logger.error(f"[CONFIG] ERROR: Could not update simulator config file: {e}", exc_info=True)
+                else:
+                    logger.error(f"[CONFIG] ERROR: Config file not found at any path - simulator will NOT be removed from config!")
+            except Exception as e:
+                logger.error(f"[CONFIG] ERROR: Unexpected error processing config file: {e}", exc_info=True)
+        else:
+            logger.info(f"[CONFIG] Sensor {sensor_id} is not simulator type (type={sensor_type}), skipping config removal")
+        
+        logger.info(f"Sensor {sensor_name} ({sensor_mac}) deleted successfully by user {current_user.username}")
+        
+        return {
+            "id": sensor_id,
+            "name": sensor_name,
+            "mac": sensor_mac,
+            "message": f"Sensor {sensor_name} deleted successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in delete_sensor: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting sensor: {str(e)}")

@@ -1,0 +1,43 @@
+{
+  "simulators": [
+    {
+      "mac": "AA:BB:CC:00:11:22",
+      "latitude": 47.8095,
+      "longitude": 13.055,
+      "altitude": 500.0,
+      "battery_level": 0.95,
+      "display_clearance": "regular",
+      "readings_clearance": "regular",
+      "expected_range": [
+        980.0,
+        1050.0
+      ]
+    },
+    {
+      "mac": "AA:BB:CC:00:11:23",
+      "latitude": 47.81,
+      "longitude": 13.06,
+      "altitude": 600.0,
+      "battery_level": 0.85,
+      "display_clearance": "regular",
+      "readings_clearance": "regular",
+      "expected_range": [
+        980.0,
+        1050.0
+      ]
+    },
+    {
+      "mac": "AA:BB:CC:00:11:24",
+      "latitude": 47.811,
+      "longitude": 13.061,
+      "altitude": 700.0,
+      "battery_level": 0.75,
+      "display_clearance": "elevated",
+      "readings_clearance": "full_clearance",
+      "expected_range": [
+        980.0,
+        1050.0
+      ]
+    }
+  ]
+}

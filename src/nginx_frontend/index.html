@@ -89,6 +89,7 @@
     <div class="toolbar" aria-label="Dashboard controls">
       <div class="toolbar__status" id="connectionStatus" role="status">Bootstrapping mock data stream</div>
       <div class="toolbar__actions">
+        <button class="chip chip--primary" data-action="add-sensor" type="button">Add sensor</button>
         <button class="chip chip--primary" data-action="refresh" type="button">Manual refresh</button>
         <span class="chip chip--ghost" id="lastUpdated">Last sync pending</span>
         <span class="chip chip--ghost" id="userInfo"></span>
@@ -155,6 +156,125 @@
         <div id="sensorGrid" class="sensor-grid" aria-live="polite"></div>
       </section>
     </main>
+  </div>
+
+  <!-- Add Sensor Modal -->
+  <div id="addSensorModal" class="modal" style="display: none;">
+    <div class="modal__overlay" onclick="closeAddSensorModal()"></div>
+    <div class="modal__content">
+      <div class="modal__header">
+        <h2>Add New Sensor</h2>
+        <button class="modal__close" onclick="closeAddSensorModal()" type="button">&times;</button>
+      </div>
+
+      <div id="sensorFormAlert" class="form-alert" style="display: none;"></div>
+
+      <form id="addSensorForm" class="sensor-form" onsubmit="handleAddSensorSubmit(event)">
+        <!-- Sensor Type Selection -->
+        <div class="form-section">
+          <h3>Sensor Type</h3>
+          <div class="form-group radio-group">
+            <label>
+              <input type="radio" name="sensorType" value="physical" checked onchange="updateFormForSensorType()" />
+              <span>Physical Sensor</span>
+            </label>
+            <label>
+              <input type="radio" name="sensorType" value="simulator" onchange="updateFormForSensorType()" />
+              <span>Simulator Sensor</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Common Fields -->
+        <div class="form-section">
+          <h3>Basic Information</h3>
+          
+          <div class="form-group">
+            <label for="sensorName">Sensor Name *</label>
+            <input type="text" id="sensorName" name="name" placeholder="e.g., Alpine Station A1" required />
+            <span class="form-error" id="nameError"></span>
+          </div>
+
+          <div class="form-group">
+            <label for="sensorMac">MAC Address *</label>
+            <input type="text" id="sensorMac" name="mac" placeholder="AA:BB:CC:DD:EE:FF" required />
+            <span class="form-error" id="macError"></span>
+          </div>
+        </div>
+
+        <!-- Location and Environment -->
+        <div class="form-section">
+          <h3>Location & Environment</h3>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label for="sensorLatitude">Latitude *</label>
+              <input type="number" id="sensorLatitude" name="latitude" step="0.0001" placeholder="47.8095" min="-90" max="90" required />
+              <span class="form-error" id="latError"></span>
+            </div>
+            <div class="form-group">
+              <label for="sensorLongitude">Longitude *</label>
+              <input type="number" id="sensorLongitude" name="longitude" step="0.0001" placeholder="13.0550" min="-180" max="180" required />
+              <span class="form-error" id="lngError"></span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="sensorAltitude">Elevation (meters above sea level)</label>
+            <input type="number" id="sensorAltitude" name="altitude" step="0.1" placeholder="500" value="0" />
+            <span class="form-error" id="altError"></span>
+          </div>
+        </div>
+
+        <!-- Measurement Configuration -->
+        <div class="form-section">
+          <h3>Measurement Configuration</h3>
+          
+          <div class="form-group">
+            <label for="sensorBattery">Battery Level (0-100%) *</label>
+            <input type="number" id="sensorBattery" name="battery" min="0" max="100" step="0.1" value="100" required />
+            <span class="form-error" id="batteryError"></span>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="pressureRangeMin">Expected Pressure Min (hPa) *</label>
+              <input type="number" id="pressureRangeMin" name="pressureMin" step="0.1" placeholder="980" value="980" required />
+              <span class="form-error" id="pressureMinError"></span>
+            </div>
+            <div class="form-group">
+              <label for="pressureRangeMax">Expected Pressure Max (hPa) *</label>
+              <input type="number" id="pressureRangeMax" name="pressureMax" step="0.1" placeholder="1050" value="1050" required />
+              <span class="form-error" id="pressureMaxError"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Access Control -->
+        <div class="form-section">
+          <h3>Access Control</h3>
+          
+          <div class="form-row">
+            <div class="form-group">
+              <label for="displayClearance">Display Clearance</label>
+              <select id="displayClearance" name="displayClearance">
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="readingsClearance">Readings Clearance</label>
+              <select id="readingsClearance" name="readingsClearance">
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Form Actions -->
+        <div class="form-actions">
+          <button type="button" class="btn btn--secondary" onclick="closeAddSensorModal()">Cancel</button>
+          <button type="submit" class="btn btn--primary">Create Sensor</button>
+        </div>
+      </form>
+    </div>
   </div>
 
   <script src="./vendor/leaflet/leaflet.js"></script>

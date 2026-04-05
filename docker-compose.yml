@@ -39,20 +39,26 @@ services:
             retries: 5
 
     sensor_simulator:
-        build: ./src/sensor_simulator
+        build:
+            context: ./src
+            dockerfile: ./sensor_simulator/Dockerfile
         container_name: sensor_simulator
         depends_on:
             mqtt_broker:
+                condition: service_healthy
+            postgres_database:
                 condition: service_healthy
         environment:
             MQTT_BROKER: ${MQTT_BROKER}
             MQTT_PORT: ${MQTT_PORT}
             LOG_LEVEL: ${LOG_LEVEL}
             SIMULATE_CRASH: 0
+            DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
         restart: unless-stopped
         volumes:
             - ./crashlogs:/app/crashlogs
             - ./logs:/app/logs
+            - ./simulator_config.json:/app/simulator_config.json
 
 
     fastapi_backend:
@@ -76,6 +82,7 @@ services:
         volumes:
             - ./crashlogs:/app/crashlogs
             - ./logs:/app/logs
+            - ./simulator_config.json:/app/simulator_config.json
 
 
     nginx_frontend:

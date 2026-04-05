@@ -108,6 +108,141 @@ Click the **Logout** button in the top-right corner of the dashboard to clear yo
 
 ---
 
+# Sensor Management
+
+## Overview
+
+The system supports two types of sensors:
+
+1. **Physical Sensors** - Real hardware devices that connect via MQTT
+2. **Simulator Sensors** - Software-based virtual sensors that generate simulated pressure data
+
+New sensors can be created directly from the dashboard without requiring container restarts or manual configuration.
+
+## Creating a New Sensor
+
+### From the Dashboard
+
+1. Click the **"Add sensor"** button in the toolbar (top-right area of the Sensor Fleet section)
+2. A modal form will appear with the following fields:
+
+#### Basic Information
+- **Sensor Name**: A descriptive name for the sensor (e.g., "Pressure Gauge A")
+- **MAC Address**: Unique MAC address in format `AA:BB:CC:DD:EE:FF`
+
+#### Location & Environment
+- **Latitude**: Geographic latitude (-90 to 90 degrees)
+- **Longitude**: Geographic longitude (-180 to 180 degrees)
+- **Altitude**: Height above sea level in meters
+
+#### Measurement Configuration
+- **Battery Level**: Initial battery percentage (0-100%)
+- **Pressure Range - Minimum**: Minimum expected pressure (hPa)
+- **Pressure Range - Maximum**: Maximum expected pressure (hPa)
+
+#### Access Control
+- **Sensor Type**: Choose **Simulator** or **Physical**
+- **Display Clearance**: Who can see this sensor on the map
+- **Readings Clearance**: Who can view this sensor's measurements
+
+### Sensor Type: Physical
+
+Physical sensors are real devices that transmit data via MQTT protocol.
+
+- **Configuration**: MAC address and location are required
+- **Data Transmission**: Sensor must be configured to send MQTT messages to the broker
+- **Topics**:
+  - Status updates: `sensors/status` (battery, location)
+  - Measurements: `measurement/data` (pressure readings)
+- **Message Properties**:
+  - `mac`: MAC address matching the registered sensor
+  - `display_clearance`: Access level (extracted from database)
+  - `readings_clearance`: Access level (extracted from database)
+
+**Example MQTT Status Message:**
+```json
+{
+  "mac": "AA:BB:CC:00:11:22",
+  "battery": 0.85,
+  "latitude": 47.8095,
+  "longitude": 13.0550,
+  "altitude": 500.0,
+  "display_clearance": "regular",
+  "readings_clearance": "regular",
+  "timestamp": "2026-04-05T10:23:45+00:00"
+}
+```
+
+### Sensor Type: Simulator
+
+Simulator sensors are virtual sensors that automatically generate realistic pressure data. They start sending data within 5 seconds of creation.
+
+- **Configuration**: All fields are required (no defaults)
+- **Data Transmission**: Automatic - starts immediately after creation
+- **Auto-start**: Simulator reads from `/app/simulator_config.json` every 5 seconds
+- **Data Points**:
+  - Measurements: Every 1 second (on `measurement/data` topic)
+  - Status updates: Every 10 seconds (on `sensors/status` topic)
+  - Battery drain: Realistic battery consumption over time
+
+**Simulator Configuration Details:**
+
+When a simulator is created:
+1. A record is added to the PostgreSQL database
+2. Configuration is appended to `simulator_config.json`
+3. The sensor_simulator service detects the new entry
+4. Simulator instance starts and begins sending data
+
+The configuration file (`simulator_config.json`) has this structure:
+```json
+{
+  "simulators": [
+    {
+      "mac": "AA:BB:CC:00:11:22",
+      "latitude": 47.8095,
+      "longitude": 13.0550,
+      "altitude": 500.0,
+      "battery_level": 0.95,
+      "display_clearance": "regular",
+      "readings_clearance": "regular",
+      "expected_range": [980.0, 1050.0]
+    }
+  ]
+}
+```
+
+## Real-Time Data Updates
+
+The dashboard displays real-time sensor data via WebSocket connection:
+
+- **Connection**: Automatic connection established on dashboard load
+- **Update Rate**: Measurements displayed as they arrive (typically ~1 per second)
+- **Historical Data**: Last 50 measurements loaded on initial connection
+- **Battery**: Updates every 10 seconds when sensor sends status
+- **Location**: Static after sensor creation (can be updated via database)
+
+## Simulator vs Physical - Comparison
+
+| Feature           | Physical          | Simulator        |
+| --------------- | --------------- | -------------- |
+| Setup Required  | Hardware device | None - auto-start |
+| Default Data    | Depends on device | Realistic pressure curve |
+| Battery Updates | From device     | Automatic drain |
+| Start Delay     | Depends on device | 5 seconds max  |
+| Testing         | Requires hardware | Immediate      |
+| Configuration   | Via device      | Via form/JSON  |
+
+## Accessing Sensor Data
+
+Once a sensor is created:
+
+1. **On Map**: Visible to users with role ≥ `display_clearance`
+2. **Measurements**: Accessible to users with role ≥ `readings_clearance`
+3. **Hiding Data**: If user lacks `readings_clearance`, fields show "⚠ Insufficient clearance for readings"
+4. **Filtering**: The API automatically filters by user permissions
+
+---
+
 # Account Permissions and Role Hierarchy
 
 ## Overview
@@ -320,6 +455,86 @@ When a user views average pressure statistics:
 - If no live data appears, inspect `sensor_simulator` and `mqtt_broker` logs.
 - If the frontend loads but shows no data, check the browser network tab and confirm `fastapi_backend` is reachable on `API_PORT`.
 - MQTT anonymous access is enabled in `mosquitto.conf`; keep that configuration for development only.
+
+## Sensor Creation Issues
+
+### Simulator not sending data after creation
+
+**Symptoms**: Newly created simulator appears in sensor list but shows "---" for measurements
+
+**Diagnosis**:
+1. Check if simulator is running: `docker compose logs sensor_simulator --tail=50`
+2. Look for message: `Loaded simulator <MAC> from config file`
+3. Verify JSON config file exists: `docker compose exec sensor_simulator cat /app/simulator_config.json | head -20`
+
+**Solutions**:
+- Wait up to 5 seconds - sensor_simulator checks config every 5 seconds
+- Verify simulator config file has correct JSON structure - must include all fields
+- Check MQTT broker is running: `docker compose logs mqtt_broker --tail=20`
+- Restart sensor_simulator: `docker compose restart sensor_simulator`
+
+### Simulator shows 0% battery immediately
+
+- Simulators initialize with realistic random battery (20-100%)
+- If showing 0%, simulator may not have sent status yet (wait 10 seconds)
+- Check logs: `docker compose logs sensor_simulator | grep "battery"`
+
+## Simulator Configuration Issues
+
+### simulator_config.json is empty or malformed
+
+The configuration file is located at `./simulator_config.json` in the project root.
+
+**To reset to default simulators**:
+```json
+{
+  "simulators": [
+    {
+      "mac": "AA:BB:CC:00:11:22",
+      "latitude": 47.8095,
+      "longitude": 13.0550,
+      "altitude": 500.0,
+      "battery_level": 0.95,
+      "display_clearance": "regular",
+      "readings_clearance": "regular",
+      "expected_range": [980.0, 1050.0]
+    }
+  ]
+}
+```
+
+**To manually add a simulator** (without using the form):
+1. Edit `simulator_config.json` locally
+2. Add entry to `simulators` array
+3. Wait 5 seconds or restart container: `docker compose restart sensor_simulator`
+4. New simulator should appear on dashboard within 5 seconds
+
+### Simulators offline but no error in logs
+
+**Possible causes**:
+- Configuration file not accessible to sensor_simulator container
+- MQTT broker connection refused
+- Database modules import error (check logs for "Database modules not available")
+
+**Solutions**:
+- Verify volume mount in docker-compose.yml includes `simulator_config.json`
+- Check MQTT broker health: `docker compose logs mqtt_broker | grep -i error`
+- Restart entire stack: `docker compose down && docker compose up -d --build`
+
+## Data Display Issues
+
+### WebSocket connection failing
+
+- Check browser console: F12 → Console tab
+- Verify `fastapi_backend` is running: `docker compose ps | grep fastapi`
+- Check for CORS issues in browser dev tools
+- Restart frontend connection: Refresh browser page
+
+### Measurements not updating in real-time
+
+- WebSocket may have disconnected - refresh page
+- Check that `sensor_simulator` and `mqtt_broker` are running
+- Verify `fastapi_backend` can connect to MQTT broker: `docker compose logs fastapi_backend | grep mqtt`
 
 ## Stop The System
 

@@ -96,7 +96,7 @@ class MQTTHandler:
             logger.info(f"Processing status update for sensor {mac}")
             
             with Session(engine) as session:
-                # Find or create sensor
+                # Only update existing sensors - don't auto-create from MQTT messages
                 statement = select(Sensor).where(Sensor.mac_address == mac)
                 sensor = session.exec(statement).first()
                 
@@ -113,25 +113,14 @@ class MQTTHandler:
                     # Always update clearance levels from the sensor
                     sensor.display_clearance = display_clearance
                     sensor.readings_clearance = readings_clearance
+                    session.commit()
                     logger.info(f"Updated sensor {mac} - Battery: {battery}, Location: ({latitude}, {longitude}), Altitude: {altitude}m, Clearance: display={display_clearance}, readings={readings_clearance}")
                 else:
-                    # Create new sensor
-                    sensor = Sensor(
-                        mac_address=mac,
-                        name=f"Sensor {mac}",
-                        battery_level=battery,
-                        latitude=latitude,
-                        longitude=longitude,
-                        altitude=altitude,
-                        display_clearance=display_clearance,
-                        readings_clearance=readings_clearance
-                    )
-                    session.add(sensor)
-                    session.commit()  # flush so we get an id on the object
-                    session.refresh(sensor)
-                    logger.info(f"Created new sensor {mac} with clearance: display={display_clearance}, readings={readings_clearance}")
+                    # Don't auto-create sensors from MQTT messages
+                    # Sensors must be created explicitly via API
+                    logger.debug(f"Received status update for unknown sensor {mac}. Ignoring (sensor must be created via API first)")
+                    return
                 
-                session.commit()
                 logger.debug(f"Successfully saved sensor status for {mac}")
                 
                 # broadcast status update to websocket clients if available
@@ -175,31 +164,21 @@ class MQTTHandler:
             logger.info(f"Processing measurement for sensor {mac}: {pressure} hPa (out_of_range={out_of_range})")
             
             with Session(engine) as session:
-                # Find or create sensor
+                # Only accept measurements for existing sensors - don't auto-create from MQTT messages
                 statement = select(Sensor).where(Sensor.mac_address == mac)
                 sensor = session.exec(statement).first()
                 
                 if not sensor:
-                    # Create sensor if it doesn't exist
-                    sensor = Sensor(
-                        mac_address=mac,
-                        name=f"Sensor {mac}",
-                        battery_level=1.0,
-                        latitude=0.0,
-                        longitude=0.0,
-                        display_clearance=display_clearance,
-                        readings_clearance=readings_clearance
-                    )
-                    session.add(sensor)
-                    session.commit()
-                    session.refresh(sensor)
-                    logger.info(f"Created new sensor {mac} from measurement data with clearance: display={display_clearance}, readings={readings_clearance}")
-                else:
-                    # Update clearance levels if sensor already exists
+                    # Don't auto-create sensors from MQTT messages
+                    # Sensors must be created explicitly via API
+                    logger.debug(f"Received measurement for unknown sensor {mac}. Ignoring (sensor must be created via API first)")
+                    return
+                
+                # Update clearance levels if provided
+                if display_clearance:
                     sensor.display_clearance = display_clearance
+                if readings_clearance:
                     sensor.readings_clearance = readings_clearance
-                    session.commit()
-                    logger.debug(f"Updated clearance for existing sensor {mac}: display={display_clearance}, readings={readings_clearance}")
                 
                 # Create measurement
                 measurement = Measurement(

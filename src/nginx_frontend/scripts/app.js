@@ -7,6 +7,7 @@ import {
 } from './analytics.js';
 import { createMockApi } from './mockApi.js';
 import { getAuthHeader, isAuthenticated, initAuth, logout, toggleAuthMode, handleAuthSubmit, refreshUserProfile } from './auth.js';
+import { initAddSensorModal, openAddSensorModal, closeAddSensorModal, handleAddSensorSubmit, updateFormForSensorType } from './addSensor.js';
 
 const PRESSURE_SAFE_RANGE = { min: 98, max: 105 }; // hPa boundaries for a healthy reading
 const BATTERY_LOW_THRESHOLD = 0.25; // 25%
@@ -195,6 +196,7 @@ function bindInteractions() {
   selectors.refreshButton.addEventListener('click', handleManualRefresh);
   selectors.liveButton.addEventListener('click', toggleLiveMode);
   selectors.sensorFilter.addEventListener('change', renderSensors);
+  initAddSensorModal();
 }
 
 async function hydrate() {
@@ -364,6 +366,57 @@ function deriveSensorStatus(sensor) {
   };
 }
 
+function showDeleteConfirmation(sensorId, sensorName) {
+  const confirmed = confirm(`Are you sure you want to delete "${sensorName}"? This action cannot be undone.`);
+  
+  if (!confirmed) {
+    return;
+  }
+  
+  deleteSensor(sensorId, sensorName);
+}
+
+async function deleteSensor(sensorId, sensorName) {
+  try {
+    const authHeader = getAuthHeader();
+    if (!authHeader) {
+      alert('Authentication required');
+      return;
+    }
+    
+    const response = await fetch(`${API_BASE}/sensors/${sensorId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': authHeader,
+      }
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+      alert(`Failed to delete sensor: ${error.detail || 'Unknown error'}`);
+      return;
+    }
+    
+    // Remove sensor from state
+    state.sensors = state.sensors.filter(s => s.id !== parseInt(sensorId));
+    
+    // Re-render UI
+    renderSensors();
+    renderMap();
+    renderStats();
+    
+    // Show success message
+    selectors.status.textContent = `Sensor "${sensorName}" deleted successfully`;
+    setTimeout(() => {
+      selectors.status.textContent = 'Connected';
+    }, 3000);
+    
+  } catch (error) {
+    console.error('Error deleting sensor:', error);
+    alert(`Error deleting sensor: ${error.message}`);
+  }
+}
+
 function renderSensors() {
   const container = selectors.sensorGrid;
   if (!state.sensors.length) {
@@ -407,8 +460,11 @@ function renderSensors() {
           <div class="sensor-card__title">${sensor.name || sensor.mac}</div>
           <div class="sensor-card__location">${sensor.location || sensor.mac}</div>
         </div>
-        <div class="sensor-card__status ${sensor.is_online ? 'sensor-card__status--online' : 'sensor-card__status--offline'}">
-          ${sensor.is_online ? 'Online' : 'Offline'}
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <div class="sensor-card__status ${sensor.is_online ? 'sensor-card__status--online' : 'sensor-card__status--offline'}">
+            ${sensor.is_online ? 'Online' : 'Offline'}
+          </div>
+          <button class="sensor-card__delete" aria-label="Delete sensor" data-sensor-id="${sensor.id}" data-sensor-name="${sensor.name || sensor.mac}">×</button>
         </div>
       </div>
       <div class="sensor-card__alert sensor-card__alert--${status.level}">
@@ -432,6 +488,17 @@ function renderSensors() {
       ${readabilityNotice}
     `;
     container.appendChild(card);
+    
+    // Add delete button listener
+    const deleteBtn = card.querySelector('.sensor-card__delete');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sensorId = deleteBtn.getAttribute('data-sensor-id');
+        const sensorName = deleteBtn.getAttribute('data-sensor-name');
+        showDeleteConfirmation(sensorId, sensorName);
+      });
+    }
   });
 }
 
@@ -541,6 +608,12 @@ function relativeTime(value) {
 window.logout = logout;
 window.toggleAuthMode = toggleAuthMode;
 window.handleAuthSubmit = handleAuthSubmit;
+
+// Make sensor functions globally available for inline event handlers
+window.openAddSensorModal = openAddSensorModal;
+window.closeAddSensorModal = closeAddSensorModal;
+window.handleAddSensorSubmit = handleAddSensorSubmit;
+window.updateFormForSensorType = updateFormForSensorType;
 
 // Export functions that analytics.js might need
 window.decorateSensorsWithMeasurements = decorateSensorsWithMeasurements;
