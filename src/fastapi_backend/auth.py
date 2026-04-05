@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import HTTPException, status
 
 from sqlmodel import Session, select
@@ -18,16 +17,38 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours default
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing - use bcrypt directly to avoid passlib compatibility issues
+try:
+    import bcrypt
+    HAS_BCRYPT = True
+except ImportError:
+    HAS_BCRYPT = False
+    logger.warning("bcrypt not available, password hashing may be unavailable")
 
 
 def hash_password(password: str) -> str:
     """Hash a password for storage"""
     try:
-        hashed = pwd_context.hash(password)
-        logger.debug("Password hashed successfully")
-        return hashed
+        if HAS_BCRYPT:
+            # Use bcrypt directly instead of passlib to avoid compatibility issues
+            salt = bcrypt.gensalt(rounds=12)
+            hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
+            logger.debug("Password hashed successfully with bcrypt")
+            return hashed.decode('utf-8')
+        else:
+            logger.error("bcrypt not available for password hashing")
+            raise ValueError("Password hashing not available")
+    except ValueError as e:
+        if "password cannot be longer than 72 bytes" in str(e):
+            # Truncate password to 72 bytes if too long
+            truncated_password = password[:72]
+            salt = bcrypt.gensalt(rounds=12)
+            hashed = bcrypt.hashpw(truncated_password.encode('utf-8'), salt)
+            logger.warning("Password was longer than 72 bytes, truncated for bcrypt")
+            return hashed.decode('utf-8')
+        else:
+            logger.error(f"Error hashing password: {e}")
+            raise
     except Exception as e:
         logger.error(f"Error hashing password: {e}")
         raise
@@ -36,7 +57,16 @@ def hash_password(password: str) -> str:
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash"""
     try:
-        is_valid = pwd_context.verify(plain_password, hashed_password)
+        if not HAS_BCRYPT:
+            logger.error("bcrypt not available for password verification")
+            return False
+        
+        # Truncate to 72 bytes if necessary, same as hash_password does
+        plain_password = plain_password[:72]
+        is_valid = bcrypt.checkpw(
+            plain_password.encode('utf-8'),
+            hashed_password.encode('utf-8') if isinstance(hashed_password, str) else hashed_password
+        )
         if is_valid:
             logger.debug("Password verification successful")
         else:
@@ -45,6 +75,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     except Exception as e:
         logger.error(f"Error verifying password: {e}")
         return False
+
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

@@ -181,8 +181,9 @@ class SensorSimulator:
 	"""
 	Class for simulating a sensor with the ability to publish its status or readings
 	"""
-	def __init__(self, mac: str, mqtt_broker: str, mqtt_port: int, display_clearance = "regular", readings_clearance = "regular"):
+	def __init__(self, mac: str, mqtt_broker: str, mqtt_port: int, display_clearance = "regular", readings_clearance = "regular", name: str = None):
 		self.mac = mac
+		self.name = name or f"Sensor {mac}"  # Default name if not provided
 		self.mqtt_broker = mqtt_broker
 		self.mqtt_port = mqtt_port
 		self.client = mqtt.Client()
@@ -381,7 +382,8 @@ def load_simulators_from_config(mqtt_broker, mqtt_port, running_simulators):
 					mqtt_broker=mqtt_broker,
 					mqtt_port=mqtt_port,
 					display_clearance=sim_config.get("display_clearance", "regular"),
-					readings_clearance=sim_config.get("readings_clearance", "regular")
+					readings_clearance=sim_config.get("readings_clearance", "regular"),
+					name=sim_config.get("name")  # Read name from config, use default if not provided
 				)
 				simulator.latitude = sim_config.get("latitude", 47.0)
 				simulator.longitude = sim_config.get("longitude", 13.0)
@@ -419,7 +421,7 @@ def sync_config_simulators_to_database(running_simulators):
 					# Create sensor record for this simulator
 					sensor = Sensor(
 						mac_address=mac,
-						name=f"Simulator {mac}",
+						name=simulator.name,  # Use the simulator's name from config or default
 						sensor_type="simulator",
 						latitude=simulator.latitude,
 						longitude=simulator.longitude,

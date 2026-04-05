@@ -35,8 +35,11 @@ class Sensor(SQLModel, table=True):
     display_clearance: str = Field(default="regular", max_length=50)  # Who can see the sensor on map
     readings_clearance: str = Field(default="regular", max_length=50)  # Who can view readings
     
-    # Relationship to measurements
-    measurements: list["Measurement"] = Relationship(back_populates="sensor")
+    # Relationship to measurements (with cascade delete to remove measurements when sensor is deleted)
+    measurements: list["Measurement"] = Relationship(
+        back_populates="sensor",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
 
 
 class Measurement(SQLModel, table=True):

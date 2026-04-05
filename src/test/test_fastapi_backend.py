@@ -278,18 +278,33 @@ def test_handle_sensor_status_broadcast_and_db(session: Session):
         "timestamp": "2026-03-03T12:00:00Z"
     }
 
-    # call the handler directly; it will commit using the patched engine
-    handler._handle_sensor_status(payload)
-
-    # confirm the sensor was inserted in the database
+    # Create the sensor in the database first (MQTT handler no longer auto-creates sensors)
     from fastapi_backend.models import Sensor
     from sqlmodel import select
+    sensor = Sensor(
+        mac_address=payload["mac"],
+        name="Test Sensor",
+        sensor_type="physical",
+        latitude=45.0,
+        longitude=5.0,
+        altitude=100.0,
+        battery_level=0.8,
+        display_clearance="regular",
+        readings_clearance="regular"
+    )
+    session.add(sensor)
+    session.commit()
+
+    # call the handler directly; it will update the existing sensor
+    handler._handle_sensor_status(payload)
+
+    # confirm the sensor was updated in the database
     with session:
-        sensor = session.exec(select(Sensor).where(Sensor.mac_address == payload["mac"])) .first()
-        assert sensor is not None
-        assert sensor.battery_level == pytest.approx(0.42)
-        assert sensor.latitude == pytest.approx(47.0)
-        assert sensor.longitude == pytest.approx(8.0)
+        updated_sensor = session.exec(select(Sensor).where(Sensor.mac_address == payload["mac"])).first()
+        assert updated_sensor is not None
+        assert updated_sensor.battery_level == pytest.approx(0.42)
+        assert updated_sensor.latitude == pytest.approx(47.0)
+        assert updated_sensor.longitude == pytest.approx(8.0)
 
     # the broadcast callback is scheduled asynchronously; give the loop a moment
     # retrieving the result of run_coroutine_threadsafe will block until completion.

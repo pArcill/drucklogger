@@ -507,7 +507,7 @@ def create_sensor(
             "readings_clearance": sensor.readings_clearance,
             "pressure_range_min": request.pressure_range_min,
             "pressure_range_max": request.pressure_range_max,
-            "message": f"{request.sensor_type.capitalize()} sensor created successfully. It will start sending data within 5 seconds."
+            "message": f"{request.sensor_type} sensor created successfully. It will start sending data within 5 seconds."
         }
         
     except HTTPException:

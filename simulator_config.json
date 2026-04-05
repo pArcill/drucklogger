@@ -1,6 +1,7 @@
 {
   "simulators": [
     {
+      "name": "First Sensor",
       "mac": "AA:BB:CC:00:11:22",
       "latitude": 47.8095,
       "longitude": 13.055,
@@ -14,6 +15,7 @@
       ]
     },
     {
+      "name": "Second Sensor",
       "mac": "AA:BB:CC:00:11:23",
       "latitude": 47.81,
       "longitude": 13.06,
@@ -27,6 +29,7 @@
       ]
     },
     {
+      "name": "Third Sensor",
       "mac": "AA:BB:CC:00:11:24",
       "latitude": 47.811,
       "longitude": 13.061,
@@ -34,19 +37,6 @@
       "battery_level": 0.75,
       "display_clearance": "elevated",
       "readings_clearance": "full_clearance",
-      "expected_range": [
-        980.0,
-        1050.0
-      ]
-    },
-    {
-      "mac": "33:33:33:33:33:33",
-      "latitude": 3.0,
-      "longitude": 3.0,
-      "altitude": 3.0,
-      "battery_level": 0.3,
-      "display_clearance": "guest",
-      "readings_clearance": "guest",
       "expected_range": [
         980.0,
         1050.0
