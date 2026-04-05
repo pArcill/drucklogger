@@ -66,6 +66,8 @@ docker compose logs -f sensor_simulator
 docker compose logs -f mqtt_broker
 ```
 
+or consult the locally created logs/pressure_logger.log file, as well as any system failures documented inside the crashlogs folder.
+
 ## Access The Application
 
 - Frontend dashboard: `http://localhost:80`
@@ -180,13 +182,13 @@ Visibility matrix:
 1. Connect to the PostgreSQL container:
 
    ```bash
-   docker exec -it drucklogger-postgres_database-1 psql -U admin -d sensor_db
+   docker exec -it postgres_database psql -U admin -d sensor_db
    ```
 
 2. View all users:
 
    ```sql
-   SELECT id, username, email, role FROM users;
+   SELECT id, username, em ail, role FROM users;
    ```
 
 3. Update a user's role:

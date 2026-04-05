@@ -82,9 +82,92 @@ async function login(username, password) {
   }
 }
 
+async function refreshUserProfile() {
+  try {
+    const authHeader = getAuthHeader();
+    console.log('refreshUserProfile: auth header present?', !!authHeader);
+    if (!authHeader) {
+      console.log('refreshUserProfile: no auth header, returning');
+      return;
+    }
+    
+    console.log('refreshUserProfile: fetching from', `${API_BASE}/auth/me`);
+    const response = await fetch(`${API_BASE}/auth/me`, {
+      method: 'GET',
+      headers: {
+        'Authorization': authHeader,
+      }
+    });
+
+    console.log('refreshUserProfile: response status', response.status);
+    if (!response.ok) {
+      if (response.status === 401) {
+        console.log('refreshUserProfile: 401 - clearing auth');
+        // Token expired, logout
+        clearAuth();
+        return null;
+      }
+      throw new Error(`Failed to refresh profile: ${response.status}`);
+    }
+
+    const user = await response.json();
+    console.log('refreshUserProfile: got user', user.username, 'with role', user.role);
+    setAuthUser(user);
+    if (typeof updateUserInfo === 'function') {
+      updateUserInfo();
+    }
+    return user;
+  } catch (error) {
+    console.warn('Failed to refresh user profile:', error);
+    return null;
+  }
+}
+
 function logout() {
+  console.log('Logout: starting');
+  
+  // Clean up app before logging out
+  if (typeof window.cleanupApp === 'function') {
+    console.log('Logout: calling cleanupApp');
+    window.cleanupApp();
+    console.log('Logout: cleanupApp completed');
+  } else {
+    console.warn('Logout: cleanupApp not available on window');
+  }
+  
+  console.log('Logout: clearing auth');
   clearAuth();
+  
+  console.log('Logout: resetting to login mode');
+  // If we're in register mode, toggle back to login mode
+  if (authState.isRegisterMode) {
+    authState.isRegisterMode = true; // Set to true so toggleAuthMode will set it to false
+    toggleAuthMode();
+  } else {
+    // Even if not in register mode, ensure the form UI is in login mode
+    const emailGroup = document.getElementById('emailGroup');
+    const screenMode = document.getElementById('authScreenMode');
+    const submitBtn = document.getElementById('authSubmitBtn');
+    const togglePrompt = document.getElementById('authTogglePrompt');
+    const toggleLink = document.getElementById('authToggleLink');
+    
+    emailGroup.style.display = 'none';
+    screenMode.textContent = 'Sign in to your account';
+    submitBtn.textContent = 'Sign in';
+    togglePrompt.textContent = "Don't have an account?";
+    toggleLink.textContent = 'Sign up';
+    authState.isRegisterMode = false;
+  }
+  
+  console.log('Logout: clearing form');
+  // Clear the form
+  clearAuthForm();
+  
+  console.log('Logout: showing auth screen');
+  // Show the auth screen
   showAuthScreen();
+  
+  console.log('Logout: complete');
 }
 
 function getAuthHeader() {
@@ -146,6 +229,7 @@ function toggleAuthMode() {
 function clearAuthForm() {
   document.getElementById('authForm').reset();
   document.getElementById('authAlert').style.display = 'none';
+  document.getElementById('authSubmitBtn').disabled = false;
   clearFormErrors();
 }
 
@@ -192,18 +276,46 @@ async function handleAuthSubmit(event) {
       // Auto-login after registration
       setTimeout(async () => {
         try {
+          console.log('Auto-login: attempting login');
           await login(username, password);
+          console.log('Auto-login: login successful');
+          
+          console.log('Auto-login: showing dashboard');
           showDashboard();
+          
+          // Initialize the app after login
+          console.log('Auto-login: initializing app');
+          if (typeof window.initializeApp === 'function') {
+            await window.initializeApp();
+            console.log('Auto-login: app initialized successfully');
+          } else {
+            console.warn('initializeApp not available on window');
+          }
         } catch (error) {
-          showAuthError(error.message);
+          console.error('Auto-login failed:', error);
+          showAuthError(`Login failed: ${error.message}`);
           submitBtn.disabled = false;
         }
       }, 1500);
     } else {
+      console.log('Direct login: attempting login');
       await login(username, password);
+      console.log('Direct login: login successful');
+      
+      console.log('Direct login: showing dashboard');
       showDashboard();
+      
+      // Initialize the app after login
+      console.log('Direct login: initializing app');
+      if (typeof window.initializeApp === 'function') {
+        await window.initializeApp();
+        console.log('Direct login: app initialized successfully');
+      } else {
+        console.warn('initializeApp not available on window');
+      }
     }
   } catch (error) {
+    console.error('Auth error:', error);
     showAuthError(error.message);
     submitBtn.disabled = false;
   }
@@ -245,7 +357,8 @@ export {
   showAuthError,
   showAuthSuccess,
   handleAuthSubmit,
-  updateUserInfo
+  updateUserInfo,
+  refreshUserProfile
 };
 
 // Also make functions globally available for inline event handlers
@@ -259,3 +372,4 @@ window.getCurrentUserRole = getCurrentUserRole;
 window.initAuth = initAuth;
 window.showAuthScreen = showAuthScreen;
 window.showDashboard = showDashboard;
+window.refreshUserProfile = refreshUserProfile;

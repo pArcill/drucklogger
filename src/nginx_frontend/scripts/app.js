@@ -6,7 +6,7 @@ import {
   mergeMeasurements,
 } from './analytics.js';
 import { createMockApi } from './mockApi.js';
-import { getAuthHeader, isAuthenticated, initAuth, logout, toggleAuthMode, handleAuthSubmit } from './auth.js';
+import { getAuthHeader, isAuthenticated, initAuth, logout, toggleAuthMode, handleAuthSubmit, refreshUserProfile } from './auth.js';
 
 const PRESSURE_SAFE_RANGE = { min: 98, max: 105 }; // hPa boundaries for a healthy reading
 const BATTERY_LOW_THRESHOLD = 0.25; // 25%
@@ -23,8 +23,10 @@ const state = {
   livePaused: false,
   unsubscribe: null,
   pollHandle: null,
+  profileRefreshHandle: null,
   mapInstance: null,
   markerLayer: null,
+  isInitialized: false,
 };
 
 const selectors = {
@@ -108,6 +110,71 @@ function createHttpApi(baseUrl) {
   };
 }
 
+async function initializeApp() {
+  try {
+    console.log('Initializing app: bindInteractions');
+    bindInteractions();
+    state.isInitialized = true;
+    
+    console.log('Initializing app: initMap');
+    initMap();
+    
+    console.log('Initializing app: refreshUserProfile');
+    await refreshUserProfile();
+    
+    console.log('Initializing app: hydrate');
+    await hydrate();
+    
+    console.log('Initializing app: setupRealtime');
+    setupRealtime();
+    
+    console.log('Initializing app: startPolling');
+    startPolling();
+    
+    console.log('Initializing app: startProfileRefresh');
+    startProfileRefresh();
+    
+    console.log('App initialization complete');
+  } catch (error) {
+    console.error('App initialization failed:', error);
+    state.isInitialized = false;
+    throw error;
+  }
+}
+
+function cleanupApp() {
+  try {
+    stopRealtime();
+  } catch (error) {
+    console.warn('Error stopping realtime:', error);
+  }
+  try {
+    stopPolling();
+  } catch (error) {
+    console.warn('Error stopping polling:', error);
+  }
+  try {
+    stopProfileRefresh();
+  } catch (error) {
+    console.warn('Error stopping profile refresh:', error);
+  }
+  
+  // Clear state data from previous session
+  console.log('cleanupApp: clearing state');
+  state.sensors = [];
+  state.measurements = [];
+  state.livePaused = false;
+  state.unsubscribe = null;
+  state.pollHandle = null;
+  state.profileRefreshHandle = null;
+  state.isInitialized = false;
+  
+  // Clear the sensor grid visual display
+  if (selectors.sensorGrid) {
+    selectors.sensorGrid.innerHTML = '';
+  }
+}
+
 async function bootstrap() {
   // Initialize authentication UI
   initAuth();
@@ -117,14 +184,14 @@ async function bootstrap() {
     return;
   }
   
-  bindInteractions();
-  initMap();
-  await hydrate();
-  setupRealtime();
-  startPolling();
+  await initializeApp();
 }
 
 function bindInteractions() {
+  // Guard against duplicate binding
+  if (state.isInitialized) {
+    return;
+  }
   selectors.refreshButton.addEventListener('click', handleManualRefresh);
   selectors.liveButton.addEventListener('click', toggleLiveMode);
   selectors.sensorFilter.addEventListener('change', renderSensors);
@@ -133,12 +200,15 @@ function bindInteractions() {
 async function hydrate() {
   setLoadingState(true);
   try {
+    console.log('Hydrate: fetching sensors and measurements');
     const [sensors, measurements] = await Promise.all([
       dataSource.fetchSensors(),
       dataSource.fetchMeasurements(),
     ]);
+    console.log('Hydrate: received', sensors.length, 'sensors and', measurements.length, 'measurements');
     state.sensors = sensors;
     state.measurements = mergeMeasurements([], measurements);
+    console.log('Hydrate: rendering UI');
     renderAll();
     updateStatus('Synchronized with data source');
   } catch (error) {
@@ -196,6 +266,25 @@ function stopPolling() {
     clearInterval(state.pollHandle);
   }
   state.pollHandle = null;
+}
+
+function startProfileRefresh() {
+  stopProfileRefresh();
+  // Refresh user profile every 30 seconds to detect role/permission changes
+  state.profileRefreshHandle = setInterval(async () => {
+    try {
+      await refreshUserProfile();
+    } catch (error) {
+      console.warn('Profile refresh failed', error);
+    }
+  }, 30000);
+}
+
+function stopProfileRefresh() {
+  if (state.profileRefreshHandle) {
+    clearInterval(state.profileRefreshHandle);
+  }
+  state.profileRefreshHandle = null;
 }
 
 function toggleLiveMode() {
@@ -347,10 +436,26 @@ function renderSensors() {
 }
 
 function initMap() {
-  if (!window.L || !selectors.mapContainer) {
-    selectors.mapContainer.innerHTML = '<div class="empty-state">Map library failed to load.</div>';
+  if (!window.L) {
+    console.warn('Leaflet library not loaded');
+    if (selectors.mapContainer) {
+      selectors.mapContainer.innerHTML = '<div class="empty-state">Map library failed to load.</div>';
+    }
     return;
   }
+  if (!selectors.mapContainer) {
+    console.warn('Map container not found in DOM');
+    return;
+  }
+  
+  // Destroy old map instance if it exists
+  if (state.mapInstance) {
+    console.log('initMap: destroying old map instance');
+    state.mapInstance.remove();
+    state.mapInstance = null;
+    state.markerLayer = null;
+  }
+  
   state.mapInstance = L.map('sensorMap', {
     zoomControl: false,
     scrollWheelZoom: false,
@@ -439,6 +544,8 @@ window.handleAuthSubmit = handleAuthSubmit;
 
 // Export functions that analytics.js might need
 window.decorateSensorsWithMeasurements = decorateSensorsWithMeasurements;
+window.initializeApp = initializeApp;
+window.cleanupApp = cleanupApp;
 
 bootstrap();
 
