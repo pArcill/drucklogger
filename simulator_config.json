@@ -38,6 +38,19 @@
         980.0,
         1050.0
       ]
+    },
+    {
+      "mac": "33:33:33:33:33:33",
+      "latitude": 3.0,
+      "longitude": 3.0,
+      "altitude": 3.0,
+      "battery_level": 0.3,
+      "display_clearance": "guest",
+      "readings_clearance": "guest",
+      "expected_range": [
+        980.0,
+        1050.0
+      ]
     }
   ]
 }
