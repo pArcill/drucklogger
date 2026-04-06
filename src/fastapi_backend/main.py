@@ -168,6 +168,7 @@ def register(
     
     try:
         user = register_user(session, request.username, request.email, request.password)
+        logger.info(f"New user registered: {request.username} ({request.email})")
         return {
             "id": user.id,
             "username": user.username,
@@ -204,6 +205,8 @@ def login(
             data={"sub": user.username},
             expires_delta=access_token_expires
         )
+        
+        logger.info(f"User logged in: {request.username}")
         
         return {
             "access_token": access_token,
@@ -475,6 +478,7 @@ def create_sensor(
                 
                 # Add the new simulator
                 new_sim = {
+                    "name": request.name,
                     "mac": request.mac_address,
                     "latitude": request.latitude,
                     "longitude": request.longitude,

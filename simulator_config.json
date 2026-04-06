@@ -41,6 +41,20 @@
         980.0,
         1050.0
       ]
+    },
+    {
+      "name": "NamedSen",
+      "mac": "12:23:34:45:56:67",
+      "latitude": 77.0,
+      "longitude": 77.0,
+      "altitude": 77.0,
+      "battery_level": 1.0,
+      "display_clearance": "guest",
+      "readings_clearance": "guest",
+      "expected_range": [
+        980.0,
+        1050.0
+      ]
     }
   ]
 }

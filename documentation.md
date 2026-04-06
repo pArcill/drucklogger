@@ -119,3 +119,14 @@ After brief consideration, we concluded that since the tasks mostly build up on 
 
 <h3>2026/03/24</h3>
 <li>fixed logging such that regular logs are written to project_directory/logs/logfile.log and crashlogs to project_directory/crashlogs</li>
+
+<h3>2026/03/31</h3>
+<li>re-implemented RBAC; Paolo's version was unavailable due to technical reasons</li>
+
+<h3>2026/04/05</h3>
+<li>bugfixes</li>
+<li>sensor creation feature</li>
+<li>sensor deletion feature</li>
+
+<h3>2026/04/06</h3>
+<li>bugfixes</h3>
