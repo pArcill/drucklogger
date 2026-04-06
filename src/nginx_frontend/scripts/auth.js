@@ -41,8 +41,22 @@ async function register(username, email, password) {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Registration failed');
+      // Try to parse error response as JSON, but handle non-JSON responses (like nginx error pages)
+      let errorMessage = 'Registration failed';
+      try {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const error = await response.json();
+          errorMessage = error.detail || 'Registration failed';
+        } else {
+          errorMessage = `Registration failed with status ${response.status}. Backend may be unavailable or overloaded.`;
+          console.warn(`Received non-JSON error response with status ${response.status}:`, response.statusText);
+        }
+      } catch (parseError) {
+        errorMessage = `Registration failed with status ${response.status}. Backend may be experiencing issues.`;
+        console.warn('Error parsing response:', parseError);
+      }
+      throw new Error(errorMessage);
     }
 
     return await response.json();
@@ -66,8 +80,23 @@ async function login(username, password) {
     });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Login failed');
+      // Try to parse error response as JSON, but handle non-JSON responses (like nginx error pages)
+      let errorMessage = 'Login failed';
+      try {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const error = await response.json();
+          errorMessage = error.detail || 'Login failed';
+        } else {
+          // Response is not JSON (e.g., HTML error page from nginx)
+          errorMessage = `Login failed with status ${response.status}. Backend may be unavailable or overloaded.`;
+          console.warn(`Received non-JSON error response with status ${response.status}:`, response.statusText);
+        }
+      } catch (parseError) {
+        errorMessage = `Login failed with status ${response.status}. Backend may be experiencing issues.`;
+        console.warn('Error parsing response:', parseError);
+      }
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();

@@ -27,53 +27,81 @@ except ImportError:
 
 
 def hash_password(password: str) -> str:
-    """Hash a password for storage"""
+    """Hash a password for storage using bcrypt"""
     try:
-        if HAS_BCRYPT:
-            # Use bcrypt directly instead of passlib to avoid compatibility issues
-            salt = bcrypt.gensalt(rounds=12)
-            hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-            logger.debug("Password hashed successfully with bcrypt")
-            return hashed.decode('utf-8')
-        else:
+        if not HAS_BCRYPT:
             logger.error("bcrypt not available for password hashing")
-            raise ValueError("Password hashing not available")
+            raise ValueError("Password hashing not available - bcrypt not installed")
+        
+        if not password:
+            raise ValueError("Password cannot be empty")
+        
+        # Truncate password to 72 bytes (bcrypt limit)
+        password_bytes = password[:72].encode('utf-8')
+        if len(password) > 72:
+            logger.warning(f"Password longer than 72 bytes - truncating for bcrypt compatibility")
+        
+        salt = bcrypt.gensalt(rounds=12)
+        hashed = bcrypt.hashpw(password_bytes, salt)
+        logger.debug("Password hashed successfully with bcrypt")
+        return hashed.decode('utf-8')
+        
     except ValueError as e:
-        if "password cannot be longer than 72 bytes" in str(e):
-            # Truncate password to 72 bytes if too long
-            truncated_password = password[:72]
-            salt = bcrypt.gensalt(rounds=12)
-            hashed = bcrypt.hashpw(truncated_password.encode('utf-8'), salt)
-            logger.warning("Password was longer than 72 bytes, truncated for bcrypt")
-            return hashed.decode('utf-8')
-        else:
-            logger.error(f"Error hashing password: {e}")
-            raise
+        logger.error(f"Invalid password for hashing: {e}")
+        raise
     except Exception as e:
-        logger.error(f"Error hashing password: {e}")
+        logger.error(f"Error hashing password: {e}", exc_info=True)
         raise
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
+    """Verify a password against its hash
+    
+    Supports both bcrypt (new format) and handles gracefully if hash is invalid.
+    """
     try:
+        # Validate inputs
+        if not hashed_password or not plain_password:
+            logger.warning("Empty password or hash provided to verify_password")
+            return False
+            
         if not HAS_BCRYPT:
             logger.error("bcrypt not available for password verification")
             return False
         
-        # Truncate to 72 bytes if necessary, same as hash_password does
-        plain_password = plain_password[:72]
-        is_valid = bcrypt.checkpw(
-            plain_password.encode('utf-8'),
-            hashed_password.encode('utf-8') if isinstance(hashed_password, str) else hashed_password
-        )
-        if is_valid:
-            logger.debug("Password verification successful")
+        # Truncate password to 72 bytes (bcrypt limitation)
+        plain_password_bytes = plain_password[:72].encode('utf-8')
+        
+        # Convert hash to bytes if it's a string
+        if isinstance(hashed_password, str):
+            try:
+                hashed_bytes = hashed_password.encode('utf-8')
+            except UnicodeEncodeError as e:
+                logger.error(f"Failed to encode hashed password as UTF-8: {e}")
+                return False
         else:
-            logger.debug("Password verification failed - invalid password")
-        return is_valid
+            hashed_bytes = hashed_password
+        
+        # Verify the password
+        try:
+            is_valid = bcrypt.checkpw(plain_password_bytes, hashed_bytes)
+            if is_valid:
+                logger.debug("Password verification successful")
+            else:
+                logger.debug("Password verification failed - invalid password")
+            return is_valid
+        except ValueError as e:
+            # This commonly happens if the hash is not in valid bcrypt format
+            # This could mean the hash was stored in an older format or is corrupted
+            error_msg = str(e).lower()
+            if "invalid salt" in error_msg or "invalid hash" in error_msg:
+                logger.warning(f"Password hash is not in valid bcrypt format: {e}. This might be an old passlib hash that needs migration.")
+                return False
+            else:
+                logger.error(f"bcrypt verification error: {e}")
+                return False
     except Exception as e:
-        logger.error(f"Error verifying password: {e}")
+        logger.error(f"Unexpected error verifying password: {e}", exc_info=True)
         return False
 
 
@@ -191,6 +219,12 @@ def register_user(session: Session, username: str, email: str, password: str) ->
 def authenticate_user(session: Session, username: str, password: str) -> Optional[User]:
     """Authenticate a user by username and password"""
     try:
+        # Validate inputs
+        if not username or not password:
+            logger.warning("Empty username or password provided to authenticate_user")
+            return None
+        
+        # Query for user
         statement = select(User).where(User.username == username)
         user = session.exec(statement).first()
         
@@ -198,16 +232,23 @@ def authenticate_user(session: Session, username: str, password: str) -> Optiona
             logger.warning(f"Login attempt with non-existent user: {username}")
             return None
         
-        if not verify_password(password, user.hashed_password):
-            logger.warning(f"Login attempt with incorrect password for user: {username}")
+        # Verify password
+        if not user.hashed_password:
+            logger.warning(f"User {username} has no password hash stored - password verification impossible")
             return None
         
+        if not verify_password(password, user.hashed_password):
+            logger.info(f"Login attempt with incorrect password for user: {username}")
+            return None
+        
+        # Check if account is active
         if not user.is_active:
             logger.warning(f"Login attempt with inactive account: {username}")
             return None
         
         logger.info(f"User authenticated successfully: {username} (role={user.role})")
         return user
+        
     except Exception as e:
         logger.error(f"Error authenticating user {username}: {e}", exc_info=True)
         return None
